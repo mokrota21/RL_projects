@@ -9,7 +9,7 @@ class ValueAction:
 class Environment:
     pass
 
-# States are used in 
+# States are used in dictionary
 class MazeState:
     def __init__(self, y, x) -> None:
         self.yx = (y, x)
@@ -24,34 +24,48 @@ class MazeState:
 
 # Actions just do what needed, if not inside maze should be checked in environment
 class MazeAction:
-    def __init__(self, name) -> None:
+    def __new__(cls, name: str):
+        if name.lower() == "right":
+            return super().__new__(Right)
+        elif name.lower() == "left":
+            return super().__new__(Left)
+        elif name.lower() == "up":
+            return super().__new__(Up)
+        elif name.lower() == "down":
+            return super().__new__(Down)
+        return super().__new__(cls)
+
+    def __init__(self, name: str) -> None:
         pass
 
     def do_action(self, state):
         return state
-
+    
+    def __eq__(self, other) -> bool:
+        return isinstance(other, type(self))
+    
 class Left(MazeAction):
     def do_action(self, state: MazeState):
         y, x = state.yx
-        y -= 1
+        x -= 1
         return MazeState(y, x)
 
 class Right(MazeAction):
     def do_action(self, state: MazeState):
         y, x = state.yx
-        y += 1
+        x += 1
         return MazeState(y, x)
 
 class Up(MazeAction):
-    def do_action(self, state):
+    def do_action(self, state: MazeState):
         y, x = state.yx
-        x -= 1
+        y -= 1
         return MazeState(y, x)
 
 class Down(MazeAction):
-    def do_action(self, state):
+    def do_action(self, state: MazeState):
         y, x = state.yx
-        x += 1
+        y += 1
         return MazeState(y, x)
 
 class MazeReward:
