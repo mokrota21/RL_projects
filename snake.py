@@ -46,26 +46,29 @@ START = Point(5, 5 + HEIGHT_SCORE)
 ###################
 
 
-class Player:
+class Snake:
     """The class that sets up and runs the game."""
 
     def __init__(self):
         """Initiate pyxel, set up initial game variables, and run."""
 
         pyxel.init(
-            WIDTH, HEIGHT, title="player", fps=20, display_scale=12, capture_scale=6
+            WIDTH, HEIGHT, title="Snake!", fps=10, display_scale=12, capture_scale=6
         )
+        define_sound_and_music()
         self.reset()
         pyxel.run(self.update, self.draw)
 
     def reset(self):
         """Initiate key variables (direction, snake, apple, score, etc.)"""
 
-        self.states = deque()
-        self.states.append(START)
+        self.direction = RIGHT
+        self.snake = deque()
+        self.snake.append(START)
         self.death = False
         self.score = 0
-        self.generate_apple()
+
+        pyxel.playm(0, loop=True)
 
     ##############
     # Game logic #
@@ -78,25 +81,12 @@ class Player:
         if not self.death:
             self.update_snake()
             self.check_death()
-            self.check_apple()
 
         if pyxel.btn(pyxel.KEY_Q):
             pyxel.quit()
 
         if pyxel.btnp(pyxel.KEY_R) or pyxel.btnp(pyxel.GAMEPAD1_BUTTON_A):
             self.reset()
-
-    def update_direction(self):
-        """Watch the keys and change direction."""
-
-        if pyxel.btnr(pyxel.KEY_UP):
-            self.direction = UP
-        elif pyxel.btnr(pyxel.KEY_DOWN):
-            self.direction = DOWN
-        elif pyxel.btnr(pyxel.KEY_LEFT):
-            self.direction = LEFT
-        elif pyxel.btnr(pyxel.KEY_RIGHT):
-            self.direction = RIGHT
 
     def update_snake(self):
         """Move the snake based on the direction."""
@@ -109,11 +99,12 @@ class Player:
             direction = LEFT
         elif pyxel.btnr(pyxel.KEY_RIGHT):
             direction = RIGHT
-        old_state = self.states[0]
-        new_state = Point(old_state.x + self.direction.x, old_state.y + self.direction.y)
-        self.states.appendleft(new_state)
-        self.popped_point = self.states.pop()
-
+        else:
+            direction = Point(0, 0)
+        old_state = self.snake[0]
+        new_state = Point(old_state.x + direction.x, old_state.y + direction.y)
+        self.snake.appendleft(new_state)
+        self.popped_point = self.snake.pop()
     def check_apple(self):
         """Check whether the snake is on an apple."""
 
@@ -277,4 +268,4 @@ def define_sound_and_music():
     pyxel.musics[0].set([], [2], [3], [4])
 
 
-Player()
+Snake()
