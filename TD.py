@@ -1,4 +1,4 @@
-from model import Policy, Action, State, ValueAction, Environment
+from design import Policy, Action, State, ValueAction, Environment
 from random import randint, choice, uniform
 
 class MazeState(State):

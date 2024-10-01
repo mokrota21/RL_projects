@@ -1,20 +1,18 @@
-# title: Snake!
-# author: Marcus Croucher
-# desc: A Pyxel snake game example
-# site: https://github.com/kitao/pyxel
-# license: MIT
-# version: 1.0
-
 from collections import deque, namedtuple
-from datetime import datetime
+import maze
+import design
+from datetime import datetime, timedelta
+from abc import ABC, abstractmethod
+from random import choice, sample
 import pyxel
 
 Point = namedtuple("Point", ["x", "y"])  # Convenience class for coordinates
 
-
-#############
-# Constants #
-#############
+class Role:
+    def __init__(self, name) -> None:
+        assert name in ["hunter", "prey"]
+        self.name = name
+        
 
 COL_BACKGROUND = 3
 COL_BODY = 11
@@ -29,69 +27,25 @@ HEIGHT_DEATH = 5
 WIDTH = 40
 HEIGHT = 50
 
-HEIGHT_SCORE = pyxel.FONT_HEIGHT
-COL_SCORE = 6
-COL_SCORE_BACKGROUND = 5
-
 UP = Point(0, -1)
 DOWN = Point(0, 1)
 RIGHT = Point(1, 0)
 LEFT = Point(-1, 0)
+STAY = Point(0, 0)
 
-START = Point(5, 5 + HEIGHT_SCORE)
+class Player(ABC):
+    """Basic Player class, it decides what actions to push in environment"""
 
+    @abstractmethod
+    def update(self, pos: Point):
+        pass
 
-###################
-# The game itself #
-###################
-
-class Player:
-    pass
-
-class Maze:
-    """The game environment"""
-
-    def __init__(self, map=None, player=None) -> None:
-        """Initiate pyxel, set up initial game variables and run."""
-        pyxel.init(
-            WIDTH, HEIGHT, title="Snake!", fps=120, display_scale=20, capture_scale=6
-        )
-        self.reset()
-        pyxel.run(self.update, self.draw)
+class RealPlayer(Player):
+    def __init__(self) -> None:
+        self.direction = STAY
     
-    def reset(self):
-        """Initiate key variables (direction, snake, apple, score, etc.)"""
-
-        self.direction = RIGHT
-        self.snake = deque()
-        self.snake.append(START)
-        self.death = False
-        self.score = 0
-        self.time = datetime.now()
-
-        pyxel.playm(0, loop=True)
-    
-    def update(self):
-        """Update logic of game.
-        Updates the snake and checks for scoring/win condition."""
-
-        if not self.death:
-            t_delta = (datetime.now() - self.time).seconds
-            # print(t_delta)
-            if t_delta < 1:
-                self.update_direction()
-            else:
-                self.update_snake()
-                self.time = datetime.now()
-
-        if pyxel.btn(pyxel.KEY_Q):
-            pyxel.quit()
-
-        if pyxel.btnp(pyxel.KEY_R) or pyxel.btnp(pyxel.GAMEPAD1_BUTTON_A):
-            self.reset()
-    
-    def update_direction(self):
-        # print('heere')
+    def update(self, pos):
+        # print('here')
         if pyxel.btn(pyxel.KEY_UP):
             self.direction = UP
         elif pyxel.btn(pyxel.KEY_DOWN):
@@ -100,263 +54,119 @@ class Maze:
             self.direction = LEFT
         elif pyxel.btn(pyxel.KEY_RIGHT):
             self.direction = RIGHT
+    
+class BotPlayer(Player):
+    def __init__(self, policy: design.Policy) -> None:
+        self.policy = policy
+        self.direction = STAY
 
-    def update_snake(self):
+    def point_to_state(self, point: Point):
+        return maze.MazeState(point.y, point.x)
+
+    def action_to_point(self, action: maze.MazeAction):
+        start = maze.MazeState(0, 0)
+        end = action.do_action(start)
+        y_s, x_s = start.yx
+        y_e, x_e= end.yx
+        return Point(x_e - x_s, y_e - y_s)
+
+    def update(self, pos: Point):
+        s_state = self.point_to_state(pos)
+        self.direction = self.action_to_point(self.policy.next_action(s_state, None))
+        
+
+class Maze:
+    """The game environment"""
+
+    def __init__(self, players, timedelta_per_action) -> None:
+        """Initiate pyxel, set up initial game variables and run."""
+        pyxel.init(
+            WIDTH, HEIGHT, title="Snake!", fps=120, display_scale=20, capture_scale=6
+        )
+        self.players = players
+        self.timedelta_per_action = timedelta_per_action
+        self.reset()
+        pyxel.run(self.update, self.draw)
+    
+    def reset(self):
+        """Initiate key variables (direction, snake, apple, score, etc.)"""
+        
+        all_pos = list(range(WIDTH * HEIGHT))
+        positions = sample(all_pos, len(self.players))
+        positions = list(map(lambda pos: Point(pos % WIDTH, pos // WIDTH), positions))
+        self.positions = {}
+        for i in range(len(positions)):
+            player = self.players[i]
+            position = positions[i]
+            self.positions[player] = position
+        
+        self.color = list(range(4, 16))
+        self.death = [False] * len(self.players)
+        self.death_count = 0
+        self.roles = [Role('prey') for i in range(len(self.players) - 1)]
+        self.roles.append('hunter')
+        self.time = datetime.now()
+    
+    def update(self):
+        """Update logic of game.
+        Updates the snake and checks for scoring/win condition."""
+
+        if len(self.death) - self.death_count > 1:
+            t_delta = (datetime.now() - self.time)
+            # print(t_delta)
+            if t_delta < self.timedelta_per_action:
+                for i in range(len(self.players)):
+                    player = self.players[i]
+                    pos = self.positions[player]
+                    player.update(pos)
+                # map(lambda player: player.update(), self.players)
+            else:
+                for i in range(len(self.players)):
+                    self.update_player(i)
+                self.time = datetime.now()
+
+        if pyxel.btn(pyxel.KEY_Q):
+            pyxel.quit()
+
+        if pyxel.btnp(pyxel.KEY_R) or pyxel.btnp(pyxel.GAMEPAD1_BUTTON_A):
+            self.reset()
+
+    def point_inside(self, point: Point):
+        y, x = point.y, point.x
+        return 0 <= y < HEIGHT and 0 <= x < WIDTH
+        
+
+    def update_player(self, i):
         """Move the snake based on the direction."""
 
-        old_state = self.snake[0]
-        new_state = Point(old_state.x + self.direction.x, old_state.y + self.direction.y)
-        self.snake.appendleft(new_state)
-        self.popped_point = self.snake.pop()
-        self.direction = Point(0, 0)
+        player = self.players[i]
+        old_pos = self.positions[player]
+        direction = player.direction
+        new_pos = Point(old_pos.x + direction.x, old_pos.y + direction.y)
+
+        if self.point_inside(new_pos):
+            self.positions[player] = new_pos
+        player.direction = Point(0, 0)
     
     def draw(self):
         """Draw the background, snake, score, and apple OR the end screen."""
 
-        if not self.death:
+        if len(self.death) - self.death_count > 1:
             pyxel.cls(col=COL_BACKGROUND)
-            self.draw_snake()
-            self.draw_score()
+            self.draw_players()
 
-    def draw_snake(self):
+    def draw_players(self):
         """Draw the snake with a distinct head by iterating through deque."""
+        for i in range(len(self.positions)):
+            player = self.players[i]
+            pos = self.positions[player]
+            color = self.color[i]
+            pyxel.pset(pos.x, pos.y, col=color)
 
-        for i, point in enumerate(self.snake):
-            if i == 0:
-                colour = COL_HEAD
-            else:
-                colour = COL_BODY
-            pyxel.pset(point.x, point.y, col=colour)
+class DummyPolicy(design.Policy):
+    def next_action(self, state: maze.State, env: design.Environment) -> maze.Action:
+        return maze.MazeAction(choice(['up', 'down', 'right', 'left']))
 
-    def draw_score(self):
-        """Draw the score at the top."""
-
-        score = f"{self.score:04}"
-        pyxel.rect(0, 0, WIDTH, HEIGHT_SCORE, COL_SCORE_BACKGROUND)
-        pyxel.text(1, 1, score, COL_SCORE)
-
-Maze()
-
-# class Snake:
-#     """The class that sets up and runs the game."""
-
-#     def __init__(self):
-#         """Initiate pyxel, set up initial game variables, and run."""
-
-#         pyxel.init(
-#             WIDTH, HEIGHT, title="Snake!", fps=10, display_scale=12, capture_scale=6
-#         )
-#         define_sound_and_music()
-#         self.reset()
-#         pyxel.run(self.update, self.draw)
-
-#     def reset(self):
-#         """Initiate key variables (direction, snake, apple, score, etc.)"""
-
-#         self.direction = RIGHT
-#         self.snake = deque()
-#         self.snake.append(START)
-#         self.death = False
-#         self.score = 0
-
-#         pyxel.playm(0, loop=True)
-
-#     ##############
-#     # Game logic #
-#     ##############
-
-#     def update(self):
-#         """Update logic of game.
-#         Updates the snake and checks for scoring/win condition."""
-
-#         if not self.death:
-#             self.update_snake()
-#             self.check_death()
-
-#         if pyxel.btn(pyxel.KEY_Q):
-#             pyxel.quit()
-
-#         if pyxel.btnp(pyxel.KEY_R) or pyxel.btnp(pyxel.GAMEPAD1_BUTTON_A):
-#             self.reset()
-
-#     def update_snake(self):
-#         """Move the snake based on the direction."""
-
-#         if pyxel.btnr(pyxel.KEY_UP):
-#             direction = UP
-#         elif pyxel.btnr(pyxel.KEY_DOWN):
-#             direction = DOWN
-#         elif pyxel.btnr(pyxel.KEY_LEFT):
-#             direction = LEFT
-#         elif pyxel.btnr(pyxel.KEY_RIGHT):
-#             direction = RIGHT
-#         else:
-#             direction = Point(0, 0)
-#         old_state = self.snake[0]
-#         new_state = Point(old_state.x + direction.x, old_state.y + direction.y)
-#         self.snake.appendleft(new_state)
-#         self.popped_point = self.snake.pop()
-#     def check_apple(self):
-#         """Check whether the snake is on an apple."""
-
-#         if self.snake[0] == self.apple:
-#             self.score += 1
-#             self.snake.append(self.popped_point)
-#             self.generate_apple()
-
-#             pyxel.play(0, 0)
-
-#     def generate_apple(self):
-#         """Generate an apple randomly."""
-#         snake_pixels = set(self.snake)
-
-#         self.apple = self.snake[0]
-#         while self.apple in snake_pixels:
-#             x = pyxel.rndi(0, WIDTH - 1)
-#             y = pyxel.rndi(HEIGHT_SCORE + 1, HEIGHT - 1)
-#             self.apple = Point(x, y)
-
-#     def check_death(self):
-#         """Check whether the snake has died (out of bounds or doubled up.)"""
-
-#         head = self.snake[0]
-#         if head.x < 0 or head.y < HEIGHT_SCORE or head.x >= WIDTH or head.y >= HEIGHT:
-#             self.death_event()
-#         elif len(self.snake) != len(set(self.snake)):
-#             self.death_event()
-
-#     def death_event(self):
-#         """Kill the game (bring up end screen)."""
-#         self.death = True  # Check having run into self
-
-#         pyxel.stop()
-#         pyxel.play(0, 1)
-
-#     ##############
-#     # Draw logic #
-#     ##############
-
-#     def draw(self):
-#         """Draw the background, snake, score, and apple OR the end screen."""
-
-#         if not self.death:
-#             pyxel.cls(col=COL_BACKGROUND)
-#             self.draw_snake()
-#             self.draw_score()
-#             pyxel.pset(self.apple.x, self.apple.y, col=COL_APPLE)
-
-#         else:
-#             self.draw_death()
-
-#     def draw_snake(self):
-#         """Draw the snake with a distinct head by iterating through deque."""
-
-#         for i, point in enumerate(self.snake):
-#             if i == 0:
-#                 colour = COL_HEAD
-#             else:
-#                 colour = COL_BODY
-#             pyxel.pset(point.x, point.y, col=colour)
-
-#     def draw_score(self):
-#         """Draw the score at the top."""
-
-#         score = f"{self.score:04}"
-#         pyxel.rect(0, 0, WIDTH, HEIGHT_SCORE, COL_SCORE_BACKGROUND)
-#         pyxel.text(1, 1, score, COL_SCORE)
-
-#     def draw_death(self):
-#         """Draw a blank screen with some text."""
-
-#         pyxel.cls(col=COL_DEATH)
-#         display_text = TEXT_DEATH[:]
-#         display_text.insert(1, f"{self.score:04}")
-#         for i, text in enumerate(display_text):
-#             y_offset = (pyxel.FONT_HEIGHT + 2) * i
-#             text_x = self.center_text(text, WIDTH)
-#             pyxel.text(text_x, HEIGHT_DEATH + y_offset, text, COL_TEXT_DEATH)
-
-#     @staticmethod
-#     def center_text(text, page_width, char_width=pyxel.FONT_WIDTH):
-#         """Helper function for calculating the start x value for centered text."""
-
-#         text_width = len(text) * char_width
-#         return (page_width - text_width) // 2
-
-
-# ###########################
-# # Music and sound effects #
-# ###########################
-
-
-# def define_sound_and_music():
-#     """Define sound and music."""
-
-#     # Sound effects
-#     pyxel.sounds[0].set(
-#         notes="c3e3g3c4c4", tones="s", volumes="4", effects=("n" * 4 + "f"), speed=7
-#     )
-#     pyxel.sounds[1].set(
-#         notes="f3 b2 f2 b1  f1 f1 f1 f1",
-#         tones="p",
-#         volumes=("4" * 4 + "4321"),
-#         effects=("n" * 7 + "f"),
-#         speed=9,
-#     )
-
-#     melody1 = (
-#         "c3 c3 c3 d3 e3 r e3 r"
-#         + ("r" * 8)
-#         + "e3 e3 e3 f3 d3 r c3 r"
-#         + ("r" * 8)
-#         + "c3 c3 c3 d3 e3 r e3 r"
-#         + ("r" * 8)
-#         + "b2 b2 b2 f3 d3 r c3 r"
-#         + ("r" * 8)
-#     )
-
-#     melody2 = (
-#         "rrrr e3e3e3e3 d3d3c3c3 b2b2c3c3"
-#         + "a2a2a2a2 c3c3c3c3 d3d3d3d3 e3e3e3e3"
-#         + "rrrr e3e3e3e3 d3d3c3c3 b2b2c3c3"
-#         + "a2a2a2a2 g2g2g2g2 c3c3c3c3 g2g2a2a2"
-#         + "rrrr e3e3e3e3 d3d3c3c3 b2b2c3c3"
-#         + "a2a2a2a2 c3c3c3c3 d3d3d3d3 e3e3e3e3"
-#         + "f3f3f3a3 a3a3a3a3 g3g3g3b3 b3b3b3b3"
-#         + "b3b3b3b4 rrrr e3d3c3g3 a2g2e2d2"
-#     )
-
-#     # Music
-#     pyxel.sounds[2].set(
-#         notes=melody1 * 2 + melody2 * 2,
-#         tones="s",
-#         volumes=("3"),
-#         effects=("nnnsffff"),
-#         speed=20,
-#     )
-
-#     harmony1 = (
-#         "a1 a1 a1 b1  f1 f1 c2 c2"
-#         "c2 c2 c2 c2  g1 g1 b1 b1"
-#         * 3
-#         + "f1 f1 f1 f1 f1 f1 f1 f1 g1 g1 g1 g1 g1 g1 g1 g1"
-#     )
-#     harmony2 = (
-#         ("f1" * 8 + "g1" * 8 + "a1" * 8 + ("c2" * 7 + "d2")) * 3 + "f1" * 16 + "g1" * 16
-#     )
-
-#     pyxel.sounds[3].set(
-#         notes=harmony1 * 2 + harmony2 * 2, tones="t", volumes="5", effects="f", speed=20
-#     )
-#     pyxel.sounds[4].set(
-#         notes=("f0 r a4 r  f0 f0 a4 r" "f0 r a4 r   f0 f0 a4 f0"),
-#         tones="n",
-#         volumes="6622 6622 6622 6426",
-#         effects="f",
-#         speed=20,
-#     )
-
-#     pyxel.musics[0].set([], [2], [3], [4])
-
-
-# Snake()
+timedelta_between_action = timedelta(seconds=1) / 10
+print(timedelta_between_action)
+Maze([RealPlayer(), BotPlayer(DummyPolicy())], timedelta_between_action)
