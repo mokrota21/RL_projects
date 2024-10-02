@@ -161,11 +161,11 @@ class MazeGame:
     def draw_player(self, player):
         color = self.colors[player]
         pos = self.positions[player]
-        print(pos, color, self.roles[player].name)
+        # print(pos, color, self.roles[player].name)
         pyxel.pset(pos.x, pos.y, col=color)
 
 class DummyPolicy(design.Policy):
     def next_action(self, state: maze.State, env: design.Environment) -> maze.Action:
         return maze.MazeAction(choice(['up', 'down', 'right', 'left']))
 
-MazeGame([RealPlayer(), BotPlayer(DummyPolicy())], [Role('prey'), Role('hunter')], 1, timedelta(seconds=1))
+MazeGame(players=[RealPlayer(), BotPlayer(DummyPolicy()), BotPlayer(DummyPolicy())], roles=[Role('prey'), Role('hunter'), Role('hunter')], kill_distance=2, dt_action=timedelta(seconds=1) / 10)
