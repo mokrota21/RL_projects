@@ -7,6 +7,9 @@ class ValueAction:
     pass
 
 class State(ABC):
+    def __init__(self, **kwargs) -> None:
+        self.state_features = kwargs
+
     @abstractmethod
     def __hash__(self) -> int:
         pass
