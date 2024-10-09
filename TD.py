@@ -204,35 +204,5 @@ class TDModel:
                     self.alpha * (reward + self.dim * self.value_action.max_value(next_state) - self.value_action.value(current_state, action)))
 
                 current_state = next_state
-            # t_sum = []
-            # current = 0
-            # for _, _, reward in episode[::-1]:
-            #     current += reward
-            #     t_sum.append(current)
-            #     current *= self.dim
-            # t_sum.reverse()
-            
-            # visited = {}
-            # visited_state = {}
-            # for i in range(len(episode)):
-            #     state, action, reward = episode[i]
-            #     if visited.get((state, action), True):
-            #         visited[(state, action)] = False
-                    
-            #         existed_record = self.returns.get((state, action), (0, 0))
-            #         total, encounter = (existed_record[0] + t_sum[i], existed_record[1] + 1)
-            #         self.returns[(state, action)] = (total, encounter)
-            #         self.value_action.value_action[(state, action)] = total / encounter
-
-            #     if visited_state.get(state, True):
-            #         visited_state[state] = False
-                    
-            #         valid_actions = self.env.all_actions(state)
-            #         best_action = valid_actions[0]
-            #         for action in valid_actions:
-            #             if self.value_action.value(state, action) > self.value_action.value(state, best_action):
-            #                 best_action = action
-
-            #         self.policy.policy[state] = best_action
         
         return True

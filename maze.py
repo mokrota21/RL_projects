@@ -1,14 +1,14 @@
 from design import State, Action, Policy, Environment
 
 class MazeState(State):
-    def __init__(self, y, x) -> None:
+    def __init__(self, y, x, subgoal, enemies) -> None:
         self.yx = (y, x)
 
     def __eq__(self, other) -> bool:
         if isinstance(other, MazeState):
             return self.yx == other.yx
         return False
-    
+
     def __hash__(self) -> int:
         return hash(self.yx)
     

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from random import choice, sample
 import pyxel
+import numpy as np
 
 Point = namedtuple("Point", ["x", "y"])  # Convenience class for coordinates
 
@@ -75,10 +76,11 @@ class BotPlayer(Player):
         self.direction = self.action_to_point(self.policy.next_action(s_state, None))
 
 class MazeGame:
-    def __init__(self, players, roles, kill_distance, dt_action: timedelta) -> None:
+    def __init__(self, players, roles, kill_distance, maze_map, dt_action: timedelta) -> None:
         pyxel.init(
             WIDTH, HEIGHT, title="Maze", fps=120, display_scale=20, capture_scale=6
         )
+        self.maze_map = maze_map
         self.kill_distance = kill_distance
         self.players = players
         self.dt_action = dt_action
@@ -147,7 +149,7 @@ class MazeGame:
         direction = player.direction
         pos = self.positions[player]
         new_pos = Point(pos.x + direction.x, pos.y + direction.y)
-        if self.inside(new_pos):
+        if self.inside(new_pos) and self.maze_map[new_pos.y, new_pos.x] != 1:
             self.positions[player] = new_pos
         player.direction = STAY
 

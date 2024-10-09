@@ -10,23 +10,7 @@ class State(ABC):
     def __init__(self, **kwargs) -> None:
         self.state_features = kwargs
 
-    @abstractmethod
-    def __hash__(self) -> int:
-        pass
-
-    @abstractmethod
-    def __eq__(self, other) -> bool:
-        pass
-
 class Action(ABC):
-    @abstractmethod
-    def __hash__(self) -> int:
-        pass
-
-    @abstractmethod
-    def __eq__(self, other) -> bool:
-        pass
-
     def do_action(self, state):
         return state
 
