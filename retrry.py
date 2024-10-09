@@ -1,5 +1,11 @@
 import numpy as np
 
+### Reward Map tiles meaning
+EMPTY = 0
+SUBGOAL = -1
+GOAL = -2
+# AGENTS = n where n is number of agents on the tile
+
 class State:
     pass
 class Action:
@@ -14,6 +20,7 @@ class Agent:
     pass
 
 class Point:
+    "Absolute position in the maze"
     def __init__(self, y, x) -> None:
         self.yx = (y, x)
     
@@ -24,10 +31,12 @@ class Point:
             return Point(sy + oy, sx + ox)
 
 class State:
+    "Flexible state class where we put features"
     def __init__(self, **kwargs) -> None:
         self.features = kwargs
 
 class Action:
+    "Action class allows to make action given pos: Point and returns new_pos: Point"
     def __new__(cls, name: str):
         if name.lower() == "right":
             return super().__new__(Right)
@@ -40,32 +49,38 @@ class Action:
         return super().__new__(cls)
 
 class Left(Action):
+    "Action that moves object left along x axis"
     def do_action(self, pos: Point):
         add = Point(0, -1)
         return pos + add
 
 class Right(Action):
+    "Action that moves object right along x axis"
     def do_action(self, pos: Point):
         add = Point(0, 1)
         return pos + add
 
 class Up(Action):
+    "Action that moves object up along y axis (due to nature of lists and arrays it is actually decrementing)"
     def do_action(self, pos: Point):
         add = Point(-1, 0)
         return pos + add
 
 class Down(Action):
+    "Action that moves object down along y axis (due to nature of lists and arrays it is actually incrementing)"
     def do_action(self, pos: Point):
         add = Point(1, 0)
         return pos + add
 
 class Agent:
-    def __init__(self, pos: Point, policy: Policy, role: str = 'prey') -> None:
+    "Class that provides communication between Actions and Environment"
+    def __init__(self, pos: Point, policy: Policy, role: str = 'prey', visibility: int = 2) -> None:
         self.initial_pos = pos
         self.role = role
         self.policy = policy
+        self.visibility = visibility
         
-        self.pos = None
+        self.pos = None # to avoid overfitting for this exact maze, we are not including position in features
         self.death = None
         self.has_subgoal = None
         self.has_goal = None
@@ -75,32 +90,47 @@ class Agent:
         self.death = False
         self.has_goal = False
         self.has_subgoal = False
-    
-    def action(self):
-        self
 
-### Reward Map tiles meaning
-EMPTY = 0
-SUBGOAL = -1
-GOAL = -2
-# AGENTS = n where n is number of agents on the tile
+    def full_vision(self, environment):
+        map = environment.map
+        vis_shape = map.shape
+        vis_shape = (vis_shape[0] + self.visibility * 2, vis_shape[1] + self.visibility * 2)
+        visibility_map = np.zeros(shape=vis_shape, dtype=int)
+        visibility_map[self.visibility:-self.visibility, self.visibility:-self.visibility] = map
+        return visibility_map
+    
+    # def action(self):
+    #     pass
+
+    def update(self, environment):
+        self.vision_map = self.full_vision(environment)
+
 
 class Environment:
     def __init__(self, reward_map: np.ndarray, kill_range: int = 1) -> None:
         self.agents = []
         self.reward_map = reward_map
         self.kill_range = kill_range
+
+        self.map = None
+        self.agents = None
+    
+    def reset(self, agents):
+        self.agents = agents
+        self.map = self.reward_map
+        for agent in self.agents:
+            agent.reset()
     
     def update(self):
         self.update_preys()
         self.update_hunters()
         self.death_update()
 
-
     def play(self, agents):
-        self.agents = agents
+        self.reset(agents)
         while True:
-            self.update()
+            if not self.update():
+                break
 
 class ValueAction:
     def __init__(self, initial: dict = {}, default: float = 0) -> None:
