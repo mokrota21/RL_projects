@@ -166,6 +166,7 @@ class TDValueAction(ValueAction):
         action_list = MazeAction.all_actions()
         best_action = action_list[0]
         for action in action_list:
+            # first clause is wrong, we need to check for each key if action in it
             if (action in self.value_action.keys() and best_action not in self.value_action.keys()) or self.value(state, best_action) < self.value(state, action):
                 best_action = action
         return self.value(state, best_action)
