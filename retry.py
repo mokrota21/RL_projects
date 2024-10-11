@@ -8,7 +8,7 @@ GOAL = -2
 WALL = -3
 # AGENTS = n where n is number of agents on the tile
 ACTION_MEMORY = 0
-VISIBILITY = 10
+VISIBILITY = 1
 
 maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [1, 0, 1, 0, 0, 0, 1, 0, 0, 1],
@@ -74,55 +74,63 @@ class State:
         return str(self.features)
 
 class Action:
-    "Action class allows to make action given pos: Point and returns new_pos: Point"
-    def __new__(cls, name: str):
-        if name.lower() == "right":
-            return super().__new__(Right)
-        elif name.lower() == "left":
-            return super().__new__(Left)
-        elif name.lower() == "up":
-            return super().__new__(Up)
-        elif name.lower() == "down":
-            return super().__new__(Down)
-        return super().__new__(cls)
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, type(self))
+    def __init__(self, name):
+        self.name = name.lower()
     
-    def __hash__(self) -> int:
-        return hash(type(self))
+    def do_action(self, pos: Point):
+        action_dict = {'left': Point(0, -1), 'right': Point(0, 1), 'up': Point(-1, 0), 'down': Point(1, 0)}
+        return pos + action_dict.get(self.name, Point(0, 0))
+
+# class Action:
+#     "Action class allows to make action given pos: Point and returns new_pos: Point"
+#     def __new__(cls, name: str):
+#         if name.lower() == "right":
+#             return super().__new__(Right)
+#         elif name.lower() == "left":
+#             return super().__new__(Left)
+#         elif name.lower() == "up":
+#             return super().__new__(Up)
+#         elif name.lower() == "down":
+#             return super().__new__(Down)
+#         return super().__new__(cls)
+
+#     def __eq__(self, other) -> bool:
+#         return isinstance(other, type(self))
     
-    def __str__(self) -> str:
-        name = {Left: 'left', Right: 'right', Up: 'up', Down: 'down'}
-        return name[type(self)]
+#     def __hash__(self) -> int:
+#         return hash(type(self))
     
-    def __repr__(self) -> str:
-        name = {Left: 'left', Right: 'right', Up: 'up', Down: 'down'}
-        return name[type(self)]
+#     def __str__(self) -> str:
+#         name = {Left: 'left', Right: 'right', Up: 'up', Down: 'down'}
+#         return name[type(self)]
+    
+#     def __repr__(self) -> str:
+#         name = {Left: 'left', Right: 'right', Up: 'up', Down: 'down'}
+#         return name[type(self)]
 
-class Left(Action):
-    "Action that moves object left along x axis"
-    def do_action(self, pos: Point):
-        add = Point(0, -1)
-        return pos + add
+# class Left(Action):
+#     "Action that moves object left along x axis"
+#     def do_action(self, pos: Point):
+#         add = Point(0, -1)
+#         return pos + add
 
-class Right(Action):
-    "Action that moves object right along x axis"
-    def do_action(self, pos: Point):
-        add = Point(0, 1)
-        return pos + add
+# class Right(Action):
+#     "Action that moves object right along x axis"
+#     def do_action(self, pos: Point):
+#         add = Point(0, 1)
+#         return pos + add
 
-class Up(Action):
-    "Action that moves object up along y axis (due to nature of lists and arrays it is actually decrementing)"
-    def do_action(self, pos: Point):
-        add = Point(-1, 0)
-        return pos + add
+# class Up(Action):
+#     "Action that moves object up along y axis (due to nature of lists and arrays it is actually decrementing)"
+#     def do_action(self, pos: Point):
+#         add = Point(-1, 0)
+#         return pos + add
 
-class Down(Action):
-    "Action that moves object down along y axis (due to nature of lists and arrays it is actually incrementing)"
-    def do_action(self, pos: Point):
-        add = Point(1, 0)
-        return pos + add
+# class Down(Action):
+#     "Action that moves object down along y axis (due to nature of lists and arrays it is actually incrementing)"
+#     def do_action(self, pos: Point):
+#         add = Point(1, 0)
+#         return pos + add
     
 def all_actions():
     return [Action('up'), Action('down'), Action('left'), Action('right')]
@@ -154,7 +162,7 @@ class Agent:
         self.has_subgoal = False
 
     def full_vision(self, environment):
-        map = environment.map
+        map = environment.reward_map
         vis_shape = map.shape
         vis_shape = (vis_shape[0] + self.visibility * 2, vis_shape[1] + self.visibility * 2)
         visibility_map = np.ones(shape=vis_shape, dtype=int) * WALL
@@ -244,7 +252,7 @@ class Environment:
                 agent.reward_history.append(5)
             elif self.reward_map[new_pos.yx] == GOAL and agent.has_subgoal:
                 agent.has_goal = True
-                agent.reward_history.append(100)
+                agent.reward_history.append(10)
             else:
                 agent.reward_history.append(-1)
 
@@ -358,7 +366,7 @@ class QLearningModel:
         self.alpha = alpha # step size
         self.action_memory = action_memory # how many actions it includes in state
 
-        self.avg_delta = 0
+        self.total_delta = 0
         self.count_delta = 0
     
     def approx(self):
@@ -369,35 +377,33 @@ class QLearningModel:
         
         self.value_action.state_d[current_state] = self.value_action.state_d.get(current_state, {})
         delta = reward + self.dim * self.value_action.max_value(next_state) - self.value_action.value(current_state, action)
-        self.avg_delta = self.avg_delta * self.count_delta + delta
+        self.total_delta += delta ** 2
         self.count_delta += 1
-        self.avg_delta = self.avg_delta / self.count_delta
         self.value_action.state_d[current_state][action] = self.value_action.state_d.get(current_state, {}).get(action, 0) + (
                     self.alpha * delta)
 
     
     def train(self, max_episodes=10):
         for i in range(max_episodes):
+            self.total_delta = 0
+            self.count_delta = 0
             current_pos = self.env.random_position()
             self.agent = Agent(current_pos, self.policy, self.value_action)
 
             self.env.play(agents=[self.agent], f_after=self.approx, max_steps=self.max_episode_step)
 
             if i % 100 == 0:
-                print(f"Subgoal: {self.agent.has_subgoal};\nGoal: {self.agent.has_goal}; Avg Delta: {self.avg_delta}")
-            
-            self.avg_delta = 0
-            self.count_delta = 0
+                print(f"Subgoal: {self.agent.has_subgoal};\nGoal: {self.agent.has_goal}; MSE Delta: {(self.total_delta / self.count_delta) ** 0.5}")
         
         return True
 
-# Start training from 0
+# # Start training from 0
 
 policy = Policy()
 value_action = ValueAction()
 env = Environment(maze_map)
-qlearning = QLearningModel(policy=policy, value_action=value_action, env=env, max_episode_step=1000)
-print(qlearning.train(max_episodes=2000))
+qlearning = QLearningModel(policy=policy, value_action=value_action, env=env, max_episode_step=100)
+print(qlearning.train(max_episodes=200000))
 
 # Save trained model
 import pickle
@@ -407,7 +413,7 @@ with open(file_path, 'wb') as file:
 
 # Load trained model
 # import pickle
-# with open('qlearning_model.pkl', 'rb') as file:
+# with open('2.pkl', 'rb') as file:
 #     qlearning = pickle.load(file)
 # policy = qlearning.policy
 # value_action = qlearning.value_action
@@ -425,12 +431,14 @@ COL_WALL = 4
 COL_AGENT = 2
 COL_SUBGOAL = 0
 COL_GOAL = 11
-WIDTH = 200
-HEIGHT = 200
 PIXEL = 20
 
 env = Environment(maze_map)
-def pyxel_render():
+random_policy = Policy()
+agent = Agent(pos=Point(1, 1), policy=policy)
+env.reset(agents=[agent])
+
+def pyxel_render_env():
     map = env.reward_map.copy()
     for agent in env.agents['prey']:
         map[agent.pos_history[-1].yx] = -13
@@ -445,15 +453,39 @@ def pyxel_render():
             # Draw a rectangle of size PIXEL x PIXEL for each grid cell
             pyxel.rect(x_m * PIXEL, y_m * PIXEL, PIXEL, PIXEL, col=color)
 
+def pyxel_render_perspective():
+    map = agent.vision_history[-1]
+    map[agent.visibility, agent.visibility] = -13
     
+    height, width = map.shape[0], map.shape[1]  # Grid dimensions
+    color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL}
 
-random_policy = Policy()
-agent = Agent(pos=Point(1, 1), policy=random_policy)
-env.reset(agents=[agent])
+    for x_m in range(width):  # Iterate over the grid cells, not the pixel-level coordinates
+        for y_m in range(height):
+            obj = map[y_m, x_m]
+            color = color_mapping[obj]
+            # Draw a rectangle of size PIXEL x PIXEL for each grid cell
+            pyxel.rect(x_m * PIXEL, y_m * PIXEL, PIXEL, PIXEL, col=color)
+
+HEIGHT = 50 * env.reward_map.shape[0]
+WIDTH = 50 * env.reward_map.shape[1]
+
 pyxel.init(
             WIDTH, HEIGHT, title="Maze", fps=10, display_scale=1, capture_scale=60
         )
-pyxel.run(env.update, pyxel_render)
+
+count = 0
+def pyxel_update():
+    global count, env
+    env.update()
+    if not agent.has_goal:
+        count += 1
+    else:
+        env.reset([agent])
+        count = 0
+    print(count)
+
+pyxel.run(pyxel_update, pyxel_render_perspective)
 # env.play(agents=[agent], render=render, cooldown=0.1)
 
 
