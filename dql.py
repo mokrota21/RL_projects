@@ -24,7 +24,7 @@ print(f"Using {device} device")
 
 MEMORY = 1 # how many elements from history agent remembers
 VISIBILITY = 2 # how many tiles around itself agent can see
-input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1
+input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1 + 1 # visions + actions + has_subgoal
 output_size = 1
 
 maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
