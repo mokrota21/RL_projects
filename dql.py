@@ -5,6 +5,7 @@ import torch.nn as nn
 import random
 import numpy as np
 from time import sleep
+from collections import deque
 
 ### Reward Map tiles meaning
 EMPTY = 0
@@ -22,10 +23,10 @@ device = (
 )
 print(f"Using {device} device")
 
-MEMORY = 1 # how many elements from history agent remembers
+MEMORY = 2 # how many elements from history agent remembers (at least 2)
 VISIBILITY = 2 # how many tiles around itself agent can see
-input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1 + 1 # visions + actions + has_subgoal
-output_size = 1
+input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1 # visions + actions + has_subgoal
+output_size = 4
 
 maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [1, 0, 1, 0, 0, 0, 1, 0, 0, 1],
@@ -75,21 +76,27 @@ def numpy_to_list(ar):
         res += row
     return res
 
+def list_arrays_to_list(np_list):
+    features = []
+    for ar in np_list:
+        features += numpy_to_list(ar)
+    return features
+
 class State:
     "Put all features as a list"
-    def __init__(self, features: tuple):
-        self.features = []
-        for feature in features:
-            try:
-                feature = list(map(lambda x: numpy_to_list(x), feature))
-                tmp = []
-                for f in feature:
-                    tmp += f
-                feature = tmp
-            except:
-                pass
-            self.features += feature
-        print(len(self.features), features)
+    def __init__(self, features: list = []):
+        self.features = features
+
+    def to_tensor(self):
+        feature_list = []
+        for feature in self.features:
+            l = feature
+            if isinstance(feature[0], np.ndarray):
+                l = list_arrays_to_list(feature)
+            elif not isinstance(feature, list):
+                raise(f"Passed non list element to features: {feature}")
+            feature_list += l
+        return torch.tensor(feature_list, dtype=torch.float32).squeeze(0)
 
 
 all_actions = [
@@ -119,15 +126,15 @@ class Agent:
         self.got_goal = -1
     
     def reset(self, environment):
-        self.pos_history = [self.initial_pos]
+        self.pos_history = deque([self.initial_pos])
 
         cur_vision = self.full_vision(environment=environment)
-        empty_vision = np.ones(cur_vision.shape) * 100 # non-existent vision to fill the rest of memory
-        self.vision_history = [empty_vision * (MEMORY - 1), cur_vision]
+        empty_vision = np.ones(cur_vision.shape) * 1 # non-existent vision to fill the rest of memory
+        self.vision_history = deque([empty_vision] * (MEMORY - 1) + [cur_vision])
 
         self.action_history = []
         empty_action = -1 # non-existent action
-        self.action_history = [empty_action * (MEMORY - 1)]
+        self.action_history = deque([empty_action] * MEMORY)
 
         self.reward_history = []
         self.death = False
@@ -146,15 +153,17 @@ class Agent:
         visibility_map = visibility_map[pos[0]:2 * self.visibility + pos[0] + 1, pos[1]: 2 * self.visibility + pos[1] + 1]
         return visibility_map
     
-    def get_state(self, to: int = None):
-        return State((self.vision_history[-MEMORY:to], self.action_history[-MEMORY:to], [int(self.has_subgoal and self.got_subgoal <= to)])) # this way agent remembers actions it's already performed
+    def get_state(self):
+        return State([list(self.vision_history), list(self.action_history), [int(self.has_subgoal)]]) # this way agent remembers actions it's already performed
     
     def update(self, environment):
         "Always updates history even if invalid action. If it is invalid revert is called"
         action = self.policy.next_action(self.get_state(), environment) # Only based on what we see, such approach doesn't generalize, it will basically understand structure of maze we gave to it
         self.action_history.append(action)
+        self.action_history.popleft()
         self.pos_history.append(self.pos_history[-1] + all_actions[action])
         self.vision_history.append(self.full_vision(environment))
+        self.vision_history.popleft()
     
     def revert(self):
         self.pos_history.pop()
@@ -177,18 +186,8 @@ class Environment:
         y, x= pos.yx
         return 0 <= y < self.reward_map.shape[0] and 0 <= x < self.reward_map.shape[1]
 
-    def random_action(self, state: State):
-        actions = all_actions
-        valid_actions = []
-        map = state.features[:(VISIBILITY * 2 + 1) ** 2]
-        # print(map)
-        map = np.array(map).reshape(VISIBILITY * 2 + 1, VISIBILITY * 2 + 1)
-        agent_pos = Point(map.shape[0] // 2, map.shape[1] // 2)
-        for action in range(len(actions)):
-            new_pos = actions[action] + agent_pos
-            if map[new_pos.yx] in [EMPTY, SUBGOAL, GOAL]:
-                valid_actions.append(action)
-        return choice(valid_actions)
+    def random_action(self):
+        return choice(list(range(len(all_actions))))
 
     def random_position(self):
         empty_points = []
@@ -217,7 +216,7 @@ class Environment:
             old_pos = agent.pos_history[-2]
             
             if self.reward_map[new_pos.yx] == WALL:
-                print(f"Agent {agent} bumped in the wall: tried to reach position {new_pos} from {old_pos}")
+                # print(f"Agent {agent} bumped in the wall: tried to reach position {new_pos} from {old_pos}")
                 agent.revert()
             elif self.reward_map[new_pos.yx] == SUBGOAL and not agent.has_subgoal:
                 agent.has_subgoal = True
@@ -272,27 +271,36 @@ class DQLNetwork(nn.Module):
 
 class ValueAction:
     def __init__(self, model):
-        "To train existing model we give model as input"
+        "To train existing model we give model as input. It is assumed that output of model is of size of 4"
         self.model = model
         self.loss_fn = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters())
     
     def value(self, state: State, action):
-        self.model(state.features + [action])
+        output = self.model(state.to_tensor())[action]
+        return output
     
     def argmax(self, state: State):
-        best_action = None
-        best_res = None
-        for action in range(len(all_actions)):
-            val = self.model(torch.tensor(state.features + [action], dtype=torch.float32))
-            if best_action is None or best_res is None or val > best_res:
-                best_action = action
-                best_res = val
-        return best_action
+        action = int(torch.argmax(self.model(state.to_tensor())))
+        return action
     
-    def update(self, current_state, action, next_state, reward):
+    def max(self, state: State):
+        output_tensor = self.model(state.to_tensor())
+        action = torch.argmax(output_tensor)
+        return output_tensor[action]
+    # def argmax(self, state: State):
+    #     best_action = None
+    #     best_res = None
+    #     for action in range(len(all_actions)):
+    #         val = self.model(torch.tensor(state.features + [action], dtype=torch.float32))
+    #         if best_action is None or best_res is None or val > best_res:
+    #             best_action = action
+    #             best_res = val
+    #     return best_action
+    
+    def update(self, current_state: State, action: int, next_state: State, reward: float):
         prediction = self.value(current_state, action)
-        target = reward + self.model(torch.tensor(next_state, [self.argmax(next_state)], dtype=torch.float32))
+        target = reward + self.max(next_state)
         loss = self.loss_fn(prediction, target)
         self.optimizer.zero_grad()
         loss.backward()
@@ -306,7 +314,7 @@ class Policy:
     
     def next_action(self, state, env: Environment):
         if uniform(0, 1) < self.epsilon:
-            return env.random_action(state)
+            return env.random_action()
         return self.value_action.argmax(state)
 
 class DQLModel:
