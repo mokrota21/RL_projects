@@ -25,8 +25,8 @@ print(f"Using {device} device")
 
 MEMORY = 2 # how many elements from history agent remembers (at least 2)
 VISIBILITY = 2 # how many tiles around itself agent can see
-input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1 # visions + actions + has_subgoal
-output_size = 4
+input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1 + 1 # visions + actions + has_subgoal + next_action
+output_size = 1
 
 maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [1, 0, 1, 0, 0, 0, 1, 0, 0, 1],
@@ -40,7 +40,7 @@ maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
 replace_1 = lambda x: WALL if x == 1 else x
 maze_map = list(map(lambda x: list(map(replace_1, x)), maze_map))
-maze_map = np.array(maze_map)
+maze_map = np.array(maze_map, dtype=np.int64)
 
 class Point:
     pass
@@ -98,7 +98,6 @@ class State:
             feature_list += l
         return torch.tensor(feature_list, dtype=torch.float32).squeeze(0)
 
-
 all_actions = [
     Point(-1, 0), # up
     Point(1, 0), # down
@@ -130,7 +129,7 @@ class Agent:
 
         cur_vision = self.full_vision(environment=environment)
         empty_vision = np.ones(cur_vision.shape) * 1 # non-existent vision to fill the rest of memory
-        self.vision_history = deque([empty_vision] * (MEMORY - 1) + [cur_vision])
+        self.vision_history = deque([empty_vision] * MEMORY)
 
         self.action_history = []
         empty_action = -1 # non-existent action
@@ -154,16 +153,16 @@ class Agent:
         return visibility_map
     
     def get_state(self):
-        return State([list(self.vision_history), list(self.action_history), [int(self.has_subgoal)]]) # this way agent remembers actions it's already performed
+        return State([list(self.vision_history)[-MEMORY:], list(self.action_history)[-MEMORY:], [int(self.has_subgoal)]]) # this way agent remembers actions it's already performed
     
     def update(self, environment):
         "Always updates history even if invalid action. If it is invalid revert is called"
+        self.vision_history.append(self.full_vision(environment=environment))
+        self.vision_history.popleft()
         action = self.policy.next_action(self.get_state(), environment) # Only based on what we see, such approach doesn't generalize, it will basically understand structure of maze we gave to it
         self.action_history.append(action)
         self.action_history.popleft()
         self.pos_history.append(self.pos_history[-1] + all_actions[action])
-        self.vision_history.append(self.full_vision(environment))
-        self.vision_history.popleft()
     
     def revert(self):
         self.pos_history.pop()
@@ -275,19 +274,30 @@ class ValueAction:
         self.model = model
         self.loss_fn = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters())
-    
+
     def value(self, state: State, action):
-        output = self.model(state.to_tensor())[action]
+        state.features.append([action])
+        output = self.model(state.to_tensor())
+        state.features.pop()
         return output
-    
+
+    def best(self, state: State):
+        best_value = None
+        best_action = None
+        for action in range(len(all_actions)):
+            state.features.append([action])
+            q_value = self.model(state.to_tensor())
+            if best_value is None or best_action is None or q_value < best_value:
+                best_value = q_value
+                best_action = action
+            state.features.pop()
+        return best_action, best_value
+
     def argmax(self, state: State):
-        action = int(torch.argmax(self.model(state.to_tensor())))
-        return action
-    
+        return self.best(state)[0]
+
     def max(self, state: State):
-        output_tensor = self.model(state.to_tensor())
-        action = torch.argmax(output_tensor)
-        return output_tensor[action]
+        return self.best(state)[1]
     # def argmax(self, state: State):
     #     best_action = None
     #     best_res = None
@@ -297,7 +307,7 @@ class ValueAction:
     #             best_action = action
     #             best_res = val
     #     return best_action
-    
+
     def update(self, current_state: State, action: int, next_state: State, reward: float):
         prediction = self.value(current_state, action)
         target = reward + self.max(next_state)
@@ -305,6 +315,7 @@ class ValueAction:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        return loss
 
 class Policy:
     "Epsilon policy, it is here just for convenience"
@@ -339,7 +350,7 @@ class DQLModel:
         current_state = self.current_state
         next_state = self.agent.get_state()
 
-        self.value_action.update(current_state, action, next_state, reward)
+        self.loss = self.value_action.update(current_state, action, next_state, reward)
 
     
     def train(self, max_episodes=10):
@@ -351,11 +362,92 @@ class DQLModel:
 
             self.env.play(agents=[self.agent], f_before=self.b_update, f_after=self.a_update, max_steps=self.max_episode_step)
 
-            if i % 100 == 0:
+            if i % 50 == 0:
+                loss = self.loss.item()
+                print(f"loss: {loss:>7f}")
                 print(f"Subgoal: {self.agent.has_subgoal};\nGoal: {self.agent.has_goal}")
         return True
 
-model = DQLNetwork(input_size=input_size, output_size=output_size)
-env = Environment(maze_map)
-qlearning = DQLModel(model=model, env=env, max_episode_step=100)
-print(qlearning.train(max_episodes=200000))
+if __name__ == "__main__":
+    env = Environment(maze_map)
+    mode = input("Train or Play? T/P: ")
+    if mode == "T":
+        model = DQLNetwork(input_size=input_size, output_size=output_size)
+        qlearning = DQLModel(model=model, env=env, max_episode_step=100)
+        print(qlearning.train(max_episodes=200))
+
+        torch.save(model.state_dict(), input('Enter where to save it: ') + '.pth')
+        print("Saved PyTorch Model State")
+    elif mode == "P":
+        model_path = input("Give path to model: ")
+        model = DQLNetwork(input_size, output_size).to(device)
+        model.load_state_dict(torch.load(model_path, weights_only=True))
+        qlearning = DQLModel(model=model, env=env, max_episode_step=100)
+
+    def render(environment: Environment):
+        map = environment.reward_map.copy()
+        for agent in environment.agents['prey']:
+            map[agent.pos_history[-1].yx] = -13
+        print(map)
+
+    import pyxel
+    COL_BACKGROUND = 3
+    COL_WALL = 4
+    COL_AGENT = 2
+    COL_SUBGOAL = 0
+    COL_GOAL = 11
+    PIXEL = 20
+
+    env = Environment(maze_map)
+    policy = Policy(qlearning.value_action)
+    agent = Agent(pos=Point(1, 1), policy=policy)
+    env.reset(agents=[agent])
+
+    def pyxel_render_env():
+        map = env.reward_map.copy()
+        for agent in env.agents['prey']:
+            map[agent.pos_history[-1].yx] = -13
+        
+        height, width = map.shape[0], map.shape[1]  # Grid dimensions
+        color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL}
+
+        for x_m in range(width):  # Iterate over the grid cells, not the pixel-level coordinates
+            for y_m in range(height):
+                obj = map[y_m, x_m]
+                color = color_mapping[obj]
+                # Draw a rectangle of size PIXEL x PIXEL for each grid cell
+                pyxel.rect(x_m * PIXEL, y_m * PIXEL, PIXEL, PIXEL, col=color)
+
+    def pyxel_render_perspective():
+        map = agent.vision_history[-1]
+        map[agent.visibility, agent.visibility] = -13
+        
+        height, width = map.shape[0], map.shape[1]  # Grid dimensions
+        color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL}
+
+        for x_m in range(width):  # Iterate over the grid cells, not the pixel-level coordinates
+            for y_m in range(height):
+                obj = map[y_m, x_m]
+                color = color_mapping[obj]
+                # Draw a rectangle of size PIXEL x PIXEL for each grid cell
+                pyxel.rect(x_m * PIXEL, y_m * PIXEL, PIXEL, PIXEL, col=color)
+
+    HEIGHT = 50 * env.reward_map.shape[0]
+    WIDTH = 50 * env.reward_map.shape[1]
+
+    pyxel.init(
+                WIDTH, HEIGHT, title="Maze", fps=10, display_scale=1, capture_scale=60
+            )
+
+    count = 0
+    def pyxel_update():
+        global count, env
+        env.update()
+        if not agent.has_goal:
+            count += 1
+        else:
+            env.reset([agent])
+            count = 0
+        print(count)
+
+    pyxel.run(pyxel_update, pyxel_render_perspective)
