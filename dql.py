@@ -118,6 +118,7 @@ class Agent:
         self.vision_history = None
         self.action_history = None
         self.reward_history = None
+        self.total_reward = None
         self.death = None
         self.has_subgoal = None
         self.has_goal = None
@@ -128,7 +129,7 @@ class Agent:
         self.pos_history = deque([self.initial_pos])
 
         cur_vision = self.full_vision(environment=environment)
-        empty_vision = np.ones(cur_vision.shape) * 1 # non-existent vision to fill the rest of memory
+        empty_vision = np.ones(cur_vision.shape, dtype=np.int32) * 1 # non-existent vision to fill the rest of memory
         self.vision_history = deque([empty_vision] * MEMORY)
 
         self.action_history = []
@@ -136,6 +137,7 @@ class Agent:
         self.action_history = deque([empty_action] * MEMORY)
 
         self.reward_history = []
+        self.total_reward = 0
         self.death = False
         self.has_goal = False
         self.has_subgoal = False
@@ -205,7 +207,7 @@ class Environment:
             agent.reset(self)
             self.agents[agent.role].append(agent)
     
-    def update_prey(self):
+    def update_prey(self, hit_wall):
         for agent in self.agents['prey']:
             if agent.has_goal:
                 continue
@@ -215,23 +217,28 @@ class Environment:
             old_pos = agent.pos_history[-2]
             
             if self.reward_map[new_pos.yx] == WALL:
-                # print(f"Agent {agent} bumped in the wall: tried to reach position {new_pos} from {old_pos}")
+                if hit_wall:
+                    print(f"Agent {agent} bumped in the wall: tried to reach position {new_pos} from {old_pos}")
                 agent.revert()
+                agent.total_reward -= 1
             elif self.reward_map[new_pos.yx] == SUBGOAL and not agent.has_subgoal:
                 agent.has_subgoal = True
                 agent.got_subgoal = len(agent.vision_history)
                 agent.reward_history.append(5)
+                agent.total_reward += 5
             elif self.reward_map[new_pos.yx] == GOAL and agent.has_subgoal:
                 agent.has_goal = True
                 agent.got_goal = len(agent.vision_history)
                 agent.reward_history.append(10)
+                agent.total_reward += 10
             else:
                 agent.reward_history.append(-0.1)
+                agent.total_reward -= 0.1
 
         return True
     
-    def update(self):
-        self.update_prey()
+    def update(self, hit_wall=False):
+        self.update_prey(hit_wall=hit_wall)
 
         all_win = True
         for agent in self.agents['prey']:
@@ -287,7 +294,7 @@ class ValueAction:
         for action in range(len(all_actions)):
             state.features.append([action])
             q_value = self.model(state.to_tensor())
-            if best_value is None or best_action is None or q_value < best_value:
+            if best_value is None or best_action is None or q_value.item() < best_value.item():
                 best_value = q_value
                 best_action = action
             state.features.pop()
@@ -309,12 +316,13 @@ class ValueAction:
     #     return best_action
 
     def update(self, current_state: State, action: int, next_state: State, reward: float):
+        self.model.train()
         prediction = self.value(current_state, action)
         target = reward + self.max(next_state)
         loss = self.loss_fn(prediction, target)
-        self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        self.optimizer.zero_grad()
         return loss
 
 class Policy:
@@ -362,7 +370,7 @@ class DQLModel:
 
             self.env.play(agents=[self.agent], f_before=self.b_update, f_after=self.a_update, max_steps=self.max_episode_step)
 
-            if i % 50 == 0:
+            if i % 1 == 0:
                 loss = self.loss.item()
                 print(f"loss: {loss:>7f}")
                 print(f"Subgoal: {self.agent.has_subgoal};\nGoal: {self.agent.has_goal}")
@@ -373,13 +381,13 @@ if __name__ == "__main__":
     mode = input("Train or Play? T/P: ")
     if mode == "T":
         model = DQLNetwork(input_size=input_size, output_size=output_size)
-        qlearning = DQLModel(model=model, env=env, max_episode_step=100)
-        print(qlearning.train(max_episodes=200))
+        qlearning = DQLModel(model=model, env=env, max_episode_step=200)
+        print(qlearning.train(max_episodes=20000))
 
         torch.save(model.state_dict(), input('Enter where to save it: ') + '.pth')
         print("Saved PyTorch Model State")
     elif mode == "P":
-        model_path = input("Give path to model: ")
+        model_path = input("Give path to model: ") + '.pth'
         model = DQLNetwork(input_size, output_size).to(device)
         model.load_state_dict(torch.load(model_path, weights_only=True))
         qlearning = DQLModel(model=model, env=env, max_episode_step=100)
@@ -391,11 +399,15 @@ if __name__ == "__main__":
         print(map)
 
     import pyxel
+    import matplotlib.pyplot as plt
+    from threading import Thread
+
     COL_BACKGROUND = 3
     COL_WALL = 4
     COL_AGENT = 2
     COL_SUBGOAL = 0
     COL_GOAL = 11
+    COL_ERROR = 8
     PIXEL = 20
 
     env = Environment(maze_map)
@@ -403,13 +415,25 @@ if __name__ == "__main__":
     agent = Agent(pos=Point(1, 1), policy=policy)
     env.reset(agents=[agent])
 
+    rewards = []
+
+    def plot_rewards():
+        plt.ion()  # Interactive mode
+        fig, ax = plt.subplots()
+        while True:
+            ax.clear()
+            ax.plot(rewards)
+            ax.set_title("Rewards Over Time")
+            plt.draw()
+            plt.pause(0.1)  # Update plot every 0.1 seconds
+
     def pyxel_render_env():
         map = env.reward_map.copy()
         for agent in env.agents['prey']:
             map[agent.pos_history[-1].yx] = -13
         
         height, width = map.shape[0], map.shape[1]  # Grid dimensions
-        color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL}
+        color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL, 1: COL_ERROR}
 
         for x_m in range(width):  # Iterate over the grid cells, not the pixel-level coordinates
             for y_m in range(height):
@@ -423,7 +447,7 @@ if __name__ == "__main__":
         map[agent.visibility, agent.visibility] = -13
         
         height, width = map.shape[0], map.shape[1]  # Grid dimensions
-        color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL}
+        color_mapping = {WALL: COL_WALL, EMPTY: COL_BACKGROUND, -13: COL_AGENT, SUBGOAL: COL_SUBGOAL, GOAL: COL_GOAL, 1: COL_ERROR}
 
         for x_m in range(width):  # Iterate over the grid cells, not the pixel-level coordinates
             for y_m in range(height):
@@ -442,12 +466,17 @@ if __name__ == "__main__":
     count = 0
     def pyxel_update():
         global count, env
-        env.update()
+        env.update(hit_wall=True)
         if not agent.has_goal:
             count += 1
+            rewards.append(agent.total_reward)
         else:
             env.reset([agent])
             count = 0
         print(count)
+
+    plot_thread = Thread(target=plot_rewards)
+    plot_thread.daemon = True  # Daemonize thread so it closes with the program
+    plot_thread.start()
 
     pyxel.run(pyxel_update, pyxel_render_perspective)
