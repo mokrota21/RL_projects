@@ -6,6 +6,11 @@ import random
 import numpy as np
 from time import sleep
 from collections import deque
+import pyxel
+import matplotlib.pyplot as plt
+from threading import Thread
+from copy import deepcopy
+import os
 
 ### Reward Map tiles meaning
 EMPTY = 0
@@ -96,7 +101,7 @@ class State:
             elif not isinstance(feature, list):
                 raise(f"Passed non list element to features: {feature}")
             feature_list += l
-        return torch.tensor(feature_list, dtype=torch.float32).squeeze(0)
+        return torch.tensor(feature_list, dtype=torch.float32).squeeze(0).to(device)
 
 all_actions = [
     Point(-1, 0), # up
@@ -130,7 +135,7 @@ class Agent:
 
         cur_vision = self.full_vision(environment=environment)
         empty_vision = np.ones(cur_vision.shape, dtype=np.int32) * 1 # non-existent vision to fill the rest of memory
-        self.vision_history = deque([empty_vision] * MEMORY)
+        self.vision_history = deque([empty_vision] * (MEMORY - 1) + [cur_vision]) if MEMORY > 1 else deque([cur_vision])
 
         self.action_history = []
         empty_action = -1 # non-existent action
@@ -171,7 +176,7 @@ class Agent:
         self.pos_history.append(self.pos_history[-1])
         self.vision_history.pop()
         self.vision_history.append(self.vision_history[-1])
-        self.reward_history.append(-1)
+        self.reward_history.append(-10)
 
 
 class Environment:
@@ -220,7 +225,7 @@ class Environment:
                 if hit_wall:
                     print(f"Agent {agent} bumped in the wall: tried to reach position {new_pos} from {old_pos}")
                 agent.revert()
-                agent.total_reward -= 1
+                agent.total_reward -= 10
             elif self.reward_map[new_pos.yx] == SUBGOAL and not agent.has_subgoal:
                 agent.has_subgoal = True
                 agent.got_subgoal = len(agent.vision_history)
@@ -264,29 +269,54 @@ class Environment:
 class DQLNetwork(nn.Module):
     def __init__(self, input_size, output_size):
         super().__init__()
+        # self.linear_relu_stack = nn.Sequential(
+        #     nn.Linear(input_size, 128),
+        #     nn.ReLU(),
+        #     nn.Linear(128, 128),
+        #     nn.ReLU(),
+        #     nn.Linear(128, output_size)
+        # ).to(device)
+
         self.linear_relu_stack = nn.Sequential(
-            nn.Linear(input_size, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, output_size)
-        )
+            nn.Linear(input_size, 1000),
+            nn.Tanh(),
+            nn.Linear(1000, 128),
+            nn.Tanh(),
+            nn.Linear(128, 64),
+            nn.Tanh(),
+            nn.Linear(64, 32),
+            nn.Tanh(),
+            nn.Linear(32, 16),
+            nn.Tanh(),
+            nn.Linear(16, 8),
+            nn.Tanh(),
+            nn.Linear(8, 4),
+            nn.Tanh(),
+            nn.Linear(4, 2),
+            nn.Tanh(),
+            nn.Linear(2, output_size)
+        ).to(device)
+    
     
     def forward(self, x):
         return self.linear_relu_stack(x)
 
 class ValueAction:
-    def __init__(self, model):
+    def __init__(self, model, dim=0.9, alpha=0.01):
         "To train existing model we give model as input. It is assumed that output of model is of size of 4"
         self.model = model
         self.loss_fn = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters())
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=alpha)
+        self.dim = dim
 
     def value(self, state: State, action):
         state.features.append([action])
         output = self.model(state.to_tensor())
         state.features.pop()
         return output
+
+    def batch_value(self, batch):
+        return self.model(batch)
 
     def best(self, state: State):
         best_value = None
@@ -305,21 +335,32 @@ class ValueAction:
 
     def max(self, state: State):
         return self.best(state)[1]
-    # def argmax(self, state: State):
-    #     best_action = None
-    #     best_res = None
-    #     for action in range(len(all_actions)):
-    #         val = self.model(torch.tensor(state.features + [action], dtype=torch.float32))
-    #         if best_action is None or best_res is None or val > best_res:
-    #             best_action = action
-    #             best_res = val
-    #     return best_action
 
-    def update(self, current_state: State, action: int, next_state: State, reward: float):
+    def update(self, batch: list):
         self.model.train()
-        prediction = self.value(current_state, action)
-        target = reward + self.max(next_state)
+        assert len(batch[0]) == len(batch[1]) and len(batch[0]) == len(batch[2])
+        
+        b_state_action = []
+        for i in batch[0]:
+            state, action = i
+            state.features.append([action])
+            b_state_action.append(state.to_tensor())
+        
+        a_state = batch[1]
+        rewards = batch[2]
+        assert len(a_state) == len(rewards)
+        target = []
+
+        for i in range(len(a_state)):
+            reward = rewards[i]
+            next_state = a_state[i]
+            target.append(reward + self.dim * self.max(next_state))
+
+        target = torch.stack(target)
+        train = torch.stack(b_state_action)
+        prediction = self.batch_value(train)
         loss = self.loss_fn(prediction, target)
+
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
@@ -335,72 +376,239 @@ class Policy:
         if uniform(0, 1) < self.epsilon:
             return env.random_action()
         return self.value_action.argmax(state)
+    
+class DetPolicy:
+    def __init__(self, value_action: ValueAction, epsilon: int = 0.1):
+        self.value_action = value_action
+        self.epsilon = epsilon
+    
+    def next_action(self, state, env: Environment):
+        return self.value_action.argmax(state)
+
+class DQLVisualization:
+    def __init__(self, window_size=50):
+        self.episode_rewards = []
+        # self.episode_lengths = []
+        self.episode_losses = []
+        self.moving_avg_reward = deque(maxlen=window_size)
+
+        # Enable interactive mode
+        plt.ion()
+        self.fig, (self.ax1, self.ax3) = plt.subplots(2, 1, figsize=(10, 15))
+        self.fig.tight_layout()
+
+        plt.subplots_adjust(hspace=0.5)
+
+    def add_data(self, reward, length, loss):
+        self.episode_rewards.append(reward)
+        # self.episode_lengths.append(length)
+        self.episode_losses.append(loss)
+        self.moving_avg_reward.append(reward)
+
+    def get_stats(self):
+        avg_reward = np.mean(self.moving_avg_reward) if self.moving_avg_reward else 0
+        avg_loss = np.mean(self.episode_losses[-10:]) if self.episode_losses else 0
+        return avg_reward, avg_loss
+
+    def plot_progress(self, filename=None):
+        # Clear previous plots
+        self.ax1.cla()
+        # self.ax2.cla()
+        self.ax3.cla()
+
+        # Plot episode rewards
+        self.ax1.plot(self.episode_rewards, label='Reward')
+        self.ax1.set_title('Episode Rewards')
+        self.ax1.set_xlabel('Episode')
+        self.ax1.set_ylabel('Total Reward')
+
+        # # Plot episode lengths
+        # self.ax2.plot(self.episode_lengths, label='Episode Length')
+        # self.ax2.set_title('Episode Lengths')
+        # self.ax2.set_xlabel('Episode')
+        # self.ax2.set_ylabel('Steps')
+
+        # Plot episode losses
+        self.ax3.plot(self.episode_losses, label='Loss')
+        self.ax3.set_title('Episode Losses')
+        self.ax3.set_xlabel('Episode')
+        self.ax3.set_ylabel('Loss')
+
+        if filename:
+            self.fig.savefig(filename)
+
+        # Redraw the updated plots
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+
+# class DQLVisualization:
+#     def __init__(self, window_size=100):
+#         self.episode_rewards = []
+#         self.episode_lengths = []
+#         self.episode_losses = []
+#         self.moving_avg_reward = deque(maxlen=window_size)
+
+#     def add_data(self, reward, length, loss):
+#         self.episode_rewards.append(reward)
+#         self.episode_lengths.append(length)
+#         self.episode_losses.append(loss)
+#         self.moving_avg_reward.append(reward)
+
+#     def get_stats(self):
+#         avg_reward = np.mean(self.moving_avg_reward) if self.moving_avg_reward else 0
+#         avg_loss = np.mean(self.episode_losses[-10:]) if self.episode_losses else 0
+#         return avg_reward, avg_loss
+
+#     def plot_progress(self, show=False):
+#         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15))
+
+#         # Plot episode rewards
+#         ax1.plot(self.episode_rewards)
+#         ax1.set_title('Episode Rewards')
+#         ax1.set_xlabel('Episode')
+#         ax1.set_ylabel('Total Reward')
+
+#         # Plot episode lengths
+#         ax2.plot(self.episode_lengths)
+#         ax2.set_title('Episode Lengths')
+#         ax2.set_xlabel('Episode')
+#         ax2.set_ylabel('Steps')
+
+#         # Plot episode losses
+#         ax3.plot(self.episode_losses)
+#         ax3.set_title('Episode Losses')
+#         ax3.set_xlabel('Episode')
+#         ax3.set_ylabel('Loss')
+
+#         plt.tight_layout()
+#         if show:
+#             plt.show()
+#         else:
+#             plt.savefig(f'dql_progress_{len(self.episode_rewards)}.png')
+#             plt.close()
+
+import keyboard
 
 class DQLModel:
-    def __init__(self, model, env: Environment, max_episode_step=100, action_memory=2, epsilon: int = 0.1, dim: int = 0.9, alpha: int = 1) -> None:
-        self.value_action = ValueAction(model) # value action function
+    def __init__(self, value_action: ValueAction, env: Environment, max_episode_step=100, action_memory=2, batch_size=100, epsilon: int = 0.1) -> None:
+        self.value_action = value_action # value action function
         self.env = env # environment
         self.max_episode_step = max_episode_step
-        self.dim = dim # diminishing factor
-        self.alpha = alpha # step size
         self.epsilon = epsilon # epsilon in policy
         self.action_memory = action_memory # how many actions it includes in state
+        self.batch_size = batch_size
+        self.batch = [[], [], []] # it will have 3 lists: 1 list with states+action before update, another list with states after udpate and last list with rewards
 
-        # self.total_delta = 0
-        # self.count_delta = 0
+        self.visualizer = DQLVisualization()
     
     def b_update(self):
         self.current_state = self.agent.get_state()
     
     def a_update(self):
-        action = self.agent.action_history[-1]
-        reward = self.agent.reward_history[-1]
+        action = deepcopy(self.agent.action_history[-1])
+        reward = deepcopy(self.agent.reward_history[-1])
         current_state = self.current_state
         next_state = self.agent.get_state()
-
-        self.loss = self.value_action.update(current_state, action, next_state, reward)
+        if len(self.batch[0]) >= self.batch_size:
+            self.loss = self.value_action.update(self.batch)
+            self.episode_loss = self.loss.item()
+            self.batch = [[], [], []]
+        else:
+            self.batch[0].append((current_state, action))
+            self.batch[1].append(next_state)
+            self.batch[2].append(reward)
+        
+        self.total_reward += reward
 
     
     def train(self, max_episodes=10):
         for i in range(max_episodes):
             # self.total_delta = 0
-            # self.count_delta = 0
+            # self.counter = 0
+            # start_pos = Point(1, 1)
             start_pos = self.env.random_position() # to support exploration
             self.agent = Agent(start_pos, Policy(self.value_action, epsilon=self.epsilon))
 
-            self.env.play(agents=[self.agent], f_before=self.b_update, f_after=self.a_update, max_steps=self.max_episode_step)
+            self.total_reward = 0
+            self.episode_loss = 0
 
-            if i % 1 == 0:
-                loss = self.loss.item()
-                print(f"loss: {loss:>7f}")
+            self.env.play(agents=[self.agent], f_before=self.b_update, f_after=self.a_update, max_steps=self.max_episode_step)
+            
+            self.visualizer.add_data(self.total_reward, len(self.agent.action_history), self.episode_loss)
+
+            if i % 100 == 0:
+                avg_reward, avg_loss = self.visualizer.get_stats()
+                print(f"Episode: {i}")
+                print(f"Avg Reward: {avg_reward:.2f}")
+                print(f"Avg Loss: {avg_loss:.7f}")
                 print(f"Subgoal: {self.agent.has_subgoal};\nGoal: {self.agent.has_goal}")
+                self.visualizer.plot_progress()
+            
+            if keyboard.is_pressed('q'):
+                break
+
+        # self.visualizer.plot_progress(show=True)
+
+            # if i % 100 == 0:
+            #     loss = self.loss.item()
+            #     print(f"Episode: {i}")
+            #     print(f"loss: {loss:>7f}")
+            #     print(f"Subgoal: {self.agent.has_subgoal};\nGoal: {self.agent.has_goal}")
         return True
+    
+#####################################################################################################
 
 if __name__ == "__main__":
+    ### hyperparameters
+    max_episode_step = 50
+    action_memory = 2
+    batch_size = 25
+    epsilon = 0.1
+    dim = 0.9
+    alpha = 0.01
+    max_episodes = 2000
+    ###
+    def save_plot_with_incremented_filename(base_filename):
+        # Start with the original filename
+        filename = base_filename + '.png'
+        counter = 1
+        
+        # Increment the filename if it already exists
+        while os.path.exists(filename):
+            filename = f"{base_filename}({counter}).png"
+            counter += 1
+        
+        return filename
+
     env = Environment(maze_map)
     mode = input("Train or Play? T/P: ")
     if mode == "T":
-        model = DQLNetwork(input_size=input_size, output_size=output_size)
-        qlearning = DQLModel(model=model, env=env, max_episode_step=200)
-        print(qlearning.train(max_episodes=20000))
+        model_path = input("Give path to model: ") + '.pth'
+        model = DQLNetwork(input_size=input_size, output_size=output_size).to(device)
+        try:
+            model.load_state_dict(torch.load(model_path, weights_only=True))
+        except:
+            pass
+        value_action = ValueAction(model, dim=dim, alpha=alpha)
+        qlearning = DQLModel(value_action=value_action, env=env, max_episode_step=max_episode_step, action_memory=action_memory, batch_size=batch_size, epsilon = epsilon)
+        print(qlearning.train(max_episodes=max_episodes))
 
-        torch.save(model.state_dict(), input('Enter where to save it: ') + '.pth')
+        filename = input('Enter where to save it: ')
+        torch.save(model.state_dict(), filename + '.pth')
+        filename = save_plot_with_incremented_filename(filename)
+        qlearning.visualizer.plot_progress(filename=filename + '.png')
         print("Saved PyTorch Model State")
     elif mode == "P":
         model_path = input("Give path to model: ") + '.pth'
         model = DQLNetwork(input_size, output_size).to(device)
         model.load_state_dict(torch.load(model_path, weights_only=True))
-        qlearning = DQLModel(model=model, env=env, max_episode_step=100)
+        value_action = ValueAction(model, dim=dim, alpha=alpha)
 
     def render(environment: Environment):
         map = environment.reward_map.copy()
         for agent in environment.agents['prey']:
             map[agent.pos_history[-1].yx] = -13
         print(map)
-
-    import pyxel
-    import matplotlib.pyplot as plt
-    from threading import Thread
 
     COL_BACKGROUND = 3
     COL_WALL = 4
@@ -411,7 +619,7 @@ if __name__ == "__main__":
     PIXEL = 20
 
     env = Environment(maze_map)
-    policy = Policy(qlearning.value_action)
+    policy = DetPolicy(value_action)
     agent = Agent(pos=Point(1, 1), policy=policy)
     env.reset(agents=[agent])
 
@@ -443,7 +651,7 @@ if __name__ == "__main__":
                 pyxel.rect(x_m * PIXEL, y_m * PIXEL, PIXEL, PIXEL, col=color)
 
     def pyxel_render_perspective():
-        map = agent.vision_history[-1]
+        map = agent.vision_history[-1].copy()
         map[agent.visibility, agent.visibility] = -13
         
         height, width = map.shape[0], map.shape[1]  # Grid dimensions
@@ -477,6 +685,6 @@ if __name__ == "__main__":
 
     plot_thread = Thread(target=plot_rewards)
     plot_thread.daemon = True  # Daemonize thread so it closes with the program
-    plot_thread.start()
+    # plot_thread.start()
 
     pyxel.run(pyxel_update, pyxel_render_perspective)
