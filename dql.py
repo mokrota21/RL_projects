@@ -28,9 +28,8 @@ device = (
 )
 print(f"Using {device} device")
 
-MEMORY = 2 # how many elements from history agent remembers (at least 2)
 VISIBILITY = 2 # how many tiles around itself agent can see
-input_size = (VISIBILITY * 2 + 1) ** 2 * MEMORY + MEMORY + 1 + 1 # visions + actions + has_subgoal + next_action
+input_size = (VISIBILITY * 2 + 1) ** 2 + 1 + 1 # vision + has_subgoal + next_action
 output_size = 1
 
 maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -134,12 +133,9 @@ class Agent:
         self.pos_history = deque([self.initial_pos])
 
         cur_vision = self.full_vision(environment=environment)
-        empty_vision = np.ones(cur_vision.shape, dtype=np.int32) * 1 # non-existent vision to fill the rest of memory
-        self.vision_history = deque([empty_vision] * (MEMORY - 1) + [cur_vision]) if MEMORY > 1 else deque([cur_vision])
+        self.vision_history = deque([cur_vision, cur_vision])
 
-        self.action_history = []
-        empty_action = -1 # non-existent action
-        self.action_history = deque([empty_action] * MEMORY)
+        self.action_history = deque([-1])
 
         self.reward_history = []
         self.total_reward = 0
@@ -160,7 +156,7 @@ class Agent:
         return visibility_map
     
     def get_state(self):
-        return State([list(self.vision_history)[-MEMORY:], list(self.action_history)[-MEMORY:], [int(self.has_subgoal)]]) # this way agent remembers actions it's already performed
+        return State([list(self.vision_history)[-1:], [int(self.has_subgoal)]]) # this way agent remembers actions it's already performed
     
     def update(self, environment):
         "Always updates history even if invalid action. If it is invalid revert is called"
@@ -271,9 +267,9 @@ class DQLNetwork(nn.Module):
         super().__init__()
         # self.linear_relu_stack = nn.Sequential(
         #     nn.Linear(input_size, 128),
-        #     nn.ReLU(),
+        #     nn.Tanh(),
         #     nn.Linear(128, 128),
-        #     nn.ReLU(),
+        #     nn.Tanh(),
         #     nn.Linear(128, output_size)
         # ).to(device)
 
@@ -535,6 +531,8 @@ class DQLModel:
             self.env.play(agents=[self.agent], f_before=self.b_update, f_after=self.a_update, max_steps=self.max_episode_step)
             
             self.visualizer.add_data(self.total_reward, len(self.agent.action_history), self.episode_loss)
+            if self.total_reward > -100:
+                break
 
             if i % 100 == 0:
                 avg_reward, avg_loss = self.visualizer.get_stats()
@@ -565,7 +563,7 @@ if __name__ == "__main__":
     batch_size = 25
     epsilon = 0.1
     dim = 0.9
-    alpha = 0.01
+    alpha = 0.001
     max_episodes = 2000
     ###
     def save_plot_with_incremented_filename(base_filename):
@@ -619,7 +617,7 @@ if __name__ == "__main__":
     PIXEL = 20
 
     env = Environment(maze_map)
-    policy = DetPolicy(value_action)
+    policy = Policy(value_action)
     agent = Agent(pos=Point(1, 1), policy=policy)
     env.reset(agents=[agent])
 
