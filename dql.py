@@ -284,18 +284,18 @@ class DQLNetwork(nn.Module):
     def __init__(self, input_size, output_size):
         super().__init__()
         
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(input_size, output_size),
-            nn.Tanh(),
-            nn.Linear(output_size, output_size)
-        ).to(device)
         # self.linear_relu_stack = nn.Sequential(
-        #     nn.Linear(input_size, 128),
+        #     nn.Linear(input_size, output_size),
         #     nn.Tanh(),
-        #     nn.Linear(128, 128),
-        #     nn.Tanh(),
-        #     nn.Linear(128, output_size)
+        #     nn.Linear(output_size, output_size)
         # ).to(device)
+        self.linear_relu_stack = nn.Sequential(
+            nn.Linear(input_size, 128),
+            nn.Tanh(),
+            nn.Linear(128, 128),
+            nn.Tanh(),
+            nn.Linear(128, output_size)
+        ).to(device)
 
         # self.linear_relu_stack = nn.Sequential(
         #     nn.Linear(input_size, 1000),
@@ -570,7 +570,7 @@ if __name__ == "__main__":
     min_epsilon = 0.01
     dim = 0.9
     alpha = 0.01
-    max_episodes = 2000
+    max_episodes = 20000
     ###
     def save_plot_with_incremented_filename(base_filename):
         # Start with the original filename
