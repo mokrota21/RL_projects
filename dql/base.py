@@ -1,14 +1,14 @@
 import torch
 import numpy as np
 
-device = (
+DEVICE = (
     "cuda"
     if torch.cuda.is_available()
     else "mps"
     if torch.backends.mps.is_available()
     else "cpu"
 )
-print(f"Using {device} device")
+print(f"Using {DEVICE} device")
 
 def numpy_to_list(ar):
     res = []
@@ -30,10 +30,10 @@ class State:
     def to_tensor(self):
         feature_list = []
         for feature in self.features:
-            l = feature
-            if isinstance(feature[0], np.ndarray):
-                l = list_arrays_to_list(feature)
-            elif not isinstance(feature, list):
-                raise(f"Passed non list element to features: {feature}")
-            feature_list += l
-        return torch.tensor(feature_list, dtype=torch.float32).squeeze(0).to(device)
+            if isinstance(feature, np.ndarray):
+                feature_list.append(feature.flatten())
+            elif isinstance(feature, list):
+                feature_list.append(np.array(feature))
+            elif isinstance(feature, int) or isinstance(feature, float) or isinstance(feature, bool):
+                feature_list.append(np.array([feature], dtype=np.float32))
+        return torch.FloatTensor(np.concatenate(feature_list)).to(DEVICE)

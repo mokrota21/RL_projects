@@ -1,7 +1,7 @@
+from base import State
 from collections import deque
 import numpy as np
-from abc import ABC, classmethod
-from random import choice
+from random import choice, sample
 from time import sleep
 from typing import List
 
@@ -27,7 +27,6 @@ class Agent:
 class Environment:
     pass
 class Policy:
-    @classmethod
     def next_action(self, *args, **kwargs):
         pass
 
@@ -50,50 +49,85 @@ class Point:
     __repr__ = __str__
 
 ### Actions
-all_actions = [
+ACTIONS = [
     Point(-1, 0), # up
     Point(1, 0), # down
     Point(0, 1), # right
     Point(0, -1) # left
 ]
-UP = all_actions[0]
-DOWN = all_actions[1]
-RIGHT = all_actions[2]
-LEFT = all_actions[3]
+UP = ACTIONS[0]
+DOWN = ACTIONS[1]
+RIGHT = ACTIONS[2]
+LEFT = ACTIONS[3]
 ###
 
+def random_action_index():
+        return choice([0, 1, 2, 3])
+
 class Environment:
-    def __init__(self, reward_map: np.ndarray, kill_range: int = 1) -> None:
+    def __init__(self, map: np.ndarray, kill_range: int = 1, goal_pos = None, subgoal_pos = None) -> None:
+        self.map = map # We generate current map online without storing since it can be restored by agent history if necessary
+        if goal_pos is None:
+            assert subgoal_pos is None
+            self.random_goal_subgoal()
+        else:
+            self.goal_pos: Point = goal_pos
+            self.subgoal_pos: Point = subgoal_pos
+        self.draw_goal_subgoal()
+
         self.agents: List[Agent] = []
-        self.reward_map = reward_map # We generate current map online without storing since it can be restored by agent history if necessary
         self.kill_range = kill_range
+    
+    def draw_goal_subgoal(self):
+        self.map[self.goal_pos.yx] = GOAL_M
+        self.map[self.subgoal_pos.yx] = SUBGOAL_M
+    
+    def remove_goal_subgoal(self):
+        self.map[self.goal_pos.yx] = EMPTY_M
+        self.map[self.subgoal_pos.yx] = EMPTY_M
+    
+    def random_goal_subgoal(self):
+        self.goal_pos, self.subgoal_pos = self.random_position(2)
+
+    # def get_reward(self, pos: Point, has_subgoal: bool):
+    #     tile = self.map[pos.yx]
+    #     if tile == WALL_M:
+    #         return WALL_R
+    #     elif tile == SUBGOAL_M and not has_subgoal:
+    #         return SUBGOAL_R
+    #     elif tile == GOAL_M and has_subgoal:
+    #         return GOAL_R
+    #     else:
+    #         return EMPTY_R
     
     def valid_actions(self, pos: Point):
         valid_actions = []
-        for i in range(len(all_actions)):
-            action = all_actions[i]
+        for i in range(len(ACTIONS)):
+            action = ACTIONS[i]
             new_pos = pos + action
-            if self.pos_inside(new_pos) and self.reward_map[new_pos.yx] != WALL_M:
+            if self.pos_inside(new_pos) and self.map[new_pos.yx] != WALL_M:
                 valid_actions.append(i)
         return valid_actions
 
     def pos_inside(self, pos: Point):
         y, x= pos.yx
-        return 0 <= y < self.reward_map.shape[0] and 0 <= x < self.reward_map.shape[1]
+        return 0 <= y < self.map.shape[0] and 0 <= x < self.map.shape[1]
 
-    def random_action(self):
-        return choice([0, 1, 2, 3])
-
-    def random_position(self):
+    def random_position(self, amount=1):
         empty_points = []
-        for y in range(self.reward_map.shape[0]):
-            for x in range(self.reward_map.shape[1]):
-                if self.reward_map[y, x] == EMPTY_M:
+        for y in range(self.map.shape[0]):
+            for x in range(self.map.shape[1]):
+                if self.map[y, x] == EMPTY_M:
                     empty_points.append(Point(y, x))
-        return choice(empty_points)
+        return sample(empty_points, amount)
     
-    def reset(self, agents: List[Agent]):
-        self.map = self.reward_map
+    def reset(self, agents: List[Agent], map=None, random=True):
+        if map:
+            self.map = map
+        if random:
+            self.remove_goal_subgoal()
+            self.random_goal_subgoal()
+            self.draw_goal_subgoal()
         self.agents = []
         for agent in agents:
             agent.reset(self)
@@ -106,21 +140,28 @@ class Environment:
                 continue
             agent.update()
             
-            new_pos = agent.pos_history[-1]
-            old_pos = agent.pos_history[-2]
+            old_pos = agent.pos_history[-1]
+            action = agent.action_history[-1]
+            new_pos = old_pos + ACTIONS[action]
             
             reward = None
-            if self.reward_map[new_pos.yx] == WALL_M:
+            if self.map[new_pos.yx] == WALL_M:
                 if hit_wall:
                     print(f"Agent {agent} bumped in the wall: tried to reach position {new_pos} from {old_pos}")
                 reward = WALL_R
-            elif self.reward_map[new_pos.yx] == SUBGOAL_M and not agent.has_subgoal:
+                new_pos = old_pos
+            elif self.map[new_pos.yx] == SUBGOAL_M and not agent.has_subgoal:
                 reward = SUBGOAL_R
-            elif self.reward_map[new_pos.yx] == GOAL_M and agent.has_subgoal:
+                agent.has_subgoal = True
+                # print('subgoal')
+            elif self.map[new_pos.yx] == GOAL_M and agent.has_subgoal:
                 reward = GOAL_R
+                agent.has_goal = True
+                # print('goal')
             else:
                 reward = EMPTY_R
             agent.set_reward(reward)
+            agent.pos_history.append(new_pos)
             updated += 1
 
         return updated > 0
@@ -132,25 +173,9 @@ class Environment:
 
         return updated
 
-    def play(self, agents, f_before=None, f_after=None, render=None, cooldown: float = 0.0, max_steps: int = None):
-        self.reset(agents)
-        counter = 0
-        while max_steps is None or counter < max_steps:
-            if f_before:
-                f_before()
-            if not self.update():
-                break
-            if f_after:
-                f_after()
-            if render:
-                render(self)
-            sleep(cooldown)
-            counter += 1
-
 class Agent:
     "Class that provides communication between Policy and Environment"
-    def __init__(self, pos: Point, policy: Policy, visibility: int = VISIBILITY) -> None:
-        self.initial_pos = pos
+    def __init__(self, policy: Policy, visibility: int = VISIBILITY) -> None:
         self.policy = policy
         self.visibility = visibility
 
@@ -165,12 +190,15 @@ class Agent:
         self.total_reward = None
         self.has_subgoal = None
         self.has_goal = None
-    
+
     def reset_history(self):
-        self.pos_history = deque([self.initial_pos])
-        self.action_history = deque([-1])
-        self.observation_map = np.ones(shape=self.environment.reward_map.shape, dtype=int) * UNOBSERVED_M
+        self.pos_history = deque([self.environment.random_position()[0]])
+        self.action_history = deque()
+        self.observation_map = np.ones(shape=self.environment.map.shape, dtype=int) * UNOBSERVED_M
         self.reward_history = []
+    
+    def get_state(self):
+        return State(features=[self.observation_map])
 
     def reset(self, environment: Environment):
         self.environment = environment
@@ -180,20 +208,36 @@ class Agent:
         self.has_goal = False
         self.has_subgoal = False
 
+    def hide_obj(self, pos):
+        yx = pos.yx
+        if self.observation_map[yx] != UNOBSERVED_M:
+            self.observation_map[yx] = EMPTY_M
+    
+    def restore_obj(self, pos):
+        yx = pos.yx
+        real_tile = self.environment.map[yx]
+        if self.observation_map[yx] != UNOBSERVED_M:
+            self.observation_map[yx] = real_tile
+
     def update_vision(self):
-        map = self.environment.reward_map
+        "Agent can see only current goal. It means if he doesn't have subgoal he can't see goal, otherwise he can't see subgoal. Both will be represented by the same number"
+        map = self.environment.map
         pos = self.pos_history[-1].yx
         range = max(pos[0] - self.visibility, 0), min(pos[0] + self.visibility + 1, map.shape[0]), \
             max(pos[1] - self.visibility, 0), min(pos[1] + self.visibility + 1, map.shape[1])
         self.observation_map[range[0]:range[1], range[2]:range[3]] = map[range[0]:range[1], range[2]:range[3]]
+        if self.has_subgoal:
+            self.hide_obj(self.environment.subgoal_pos)
+            self.restore_obj(self.environment.goal_pos)
+        else:
+            self.hide_obj(self.environment.goal_pos)
+            self.restore_obj(self.environment.subgoal_pos)
     
     def update(self):
         "Always updates history even if invalid action. If it is invalid revert is called"
         self.update_vision()
-        action_index = self.policy.next_action(self) # Only based on what we see, such approach doesn't generalize, it will basically understand structure of maze we gave to it
+        action_index = self.policy.next_action(self) # Only based on what we see. It is responsibility of environment to update history when calling update
         self.action_history.append(action_index)
-        self.action_history.popleft()
-        self.pos_history.append(self.pos_history[-1] + all_actions[action_index])
     
     def set_reward(self, reward: float):
         self.reward_history.append(reward)

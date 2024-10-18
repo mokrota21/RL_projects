@@ -251,7 +251,8 @@ class DQLAgent:
         done_tensor = torch.tensor(dones, dtype=torch.int32).unsqueeze(1)
         
         # Compute Q values
-        current_q_values = self.qnetwork_online(state_tensor).gather(1, action_tensor)
+        prediction_tensor = self.qnetwork_online(state_tensor)
+        current_q_values = prediction_tensor.gather(1, action_tensor)
         next_q_values = self.qnetwork_target(next_state_tensor).max(1)[0].unsqueeze(1)
         target_q_values = reward_tensor + self.gamma * next_q_values * (1 - done_tensor)
         
