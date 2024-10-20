@@ -11,9 +11,6 @@ import json
 #hyper parameters
 
 def get_unique_filename(filename):
-    if not os.path.exists(filename):
-            return filename
-            
     name, ext = os.path.splitext(filename)
     counter = 1
         
@@ -56,7 +53,7 @@ def train_dql(env: Environment, value_action: ValueAction, num_episodes: int, ma
             action = agent.action_history[-1]
             next_state = agent.get_state()
             reward = agent.reward_history[-1]
-            value_action.memory.push(state=current_state, action=action, reward=reward, next_state=next_state)
+            value_action.memory.push(state=current_state, action=action, reward=reward, next_state=next_state, terminate=not updated)
 
             loss = value_action.learn()
             policy.decay_epsilon()

@@ -85,8 +85,8 @@ class Renderer:
 
 
 
-value_action = ValueAction(100 * 5)
-value_action.load('full_model.pth')
+value_action = ValueAction(6)
+value_action.load('wall_distance_two_layers.pth')
 policy = EPolicy(value_action=value_action, initial_epsilon=0.0)
 agent = Agent(policy=policy)
 agent.reset(environment=ENV)

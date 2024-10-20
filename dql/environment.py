@@ -18,7 +18,7 @@ WALL_R = -1.0
 SUBGOAL_R = 5.0
 GOAL_R = 10.0
 ### Agent params
-VISIBILITY = 2
+VISIBILITY = 20
 
 class Point:
     pass
@@ -224,14 +224,46 @@ class Environment:
 
         return updated
 
-def maze_observation_encoded(observation_map: np.ndarray):
-    rows, columns = observation_map.shape
-    tile_type = [EMPTY_M, WALL_M, GOAL_M, UNOBSERVED_M, AGENT_M]
-    res = np.zeros((rows, columns, len(tile_type)), dtype=np.int32)
-    for i in range(len(tile_type)):
-        tile = tile_type[i]
-        res[observation_map == tile, i] = 1
-    return res
+# def maze_observation_encoded(observation_map: np.ndarray):
+#     rows, columns = observation_map.shape
+#     tile_type = [EMPTY_M, WALL_M, GOAL_M, UNOBSERVED_M, AGENT_M]
+#     res = np.zeros((rows, columns, len(tile_type)), dtype=np.int32)
+#     for i in range(len(tile_type)):
+#         tile = tile_type[i]
+#         res[observation_map == tile, i] = 1
+#     return res
+
+# Telling how far wall is and where is goal
+def maze_observation_encoded(agent: Agent):
+    observation_map = agent.environment.map
+    pos = agent.pos_history[-1]
+    env = agent.environment
+
+    y, x = pos.yx
+    wall_u = np.where(observation_map[:, x] == WALL_M)[0]
+    wall_u = wall_u[wall_u < y]
+    distance_to_wall_u = y - wall_u[-1]
+
+    wall_d = np.where(observation_map[:, x] == WALL_M)[0]
+    wall_d = wall_d[wall_d > y]
+    distance_to_wall_d = wall_d[0] - y
+
+    wall_l = np.where(observation_map[y, :] == WALL_M)[0]
+    wall_l = wall_l[wall_l < x]
+    distance_to_wall_l = x - wall_l[-1]
+
+    wall_r = np.where(observation_map[y, :] == WALL_M)[0]
+    wall_r = wall_r[wall_r > x]
+    distance_to_wall_r = wall_r[0] - x 
+
+    goal_pos = None
+    if agent.has_subgoal:
+        goal_pos = env.goal_pos
+    else:
+        goal_pos = env.subgoal_pos
+    goal_pos = (goal_pos - pos).yx
+    
+    return np.array([distance_to_wall_d, distance_to_wall_l, distance_to_wall_r, distance_to_wall_u, goal_pos[0], goal_pos[1]], dtype=int)
 
 class Agent:
     "Class that provides communication between Policy and Environment"
@@ -259,7 +291,7 @@ class Agent:
         self.reward_history = []
     
     def get_state(self):
-        return State(features=[maze_observation_encoded(self.observation_map)])
+        return State(features=[maze_observation_encoded(self)])
 
     def reset(self, environment: Environment):
         self.environment = environment

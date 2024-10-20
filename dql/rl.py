@@ -18,40 +18,43 @@ class DQNetwork(nn.Module):
         #     nn.ReLU(),
         #     nn.Linear(128, len(ACTIONS))
         # )
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 100),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(100, 81),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(81, 64),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(64, 49),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(49, 36),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(36, 25),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(25, 16),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(16, 9),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(9, len(ACTIONS))
-        )
-        
         # self.network = nn.Sequential(
-        #     nn.Linear(input_size, 8),
+        #     nn.Linear(input_size, 100),
         #     nn.ReLU(),
         #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(8, len(ACTIONS))
+        #     nn.Linear(100, 81),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(81, 64),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(64, 49),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(49, 36),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(36, 25),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(25, 16),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(16, 9),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(9, len(ACTIONS))
         # )
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_size, 6),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(6, 4),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(4, len(ACTIONS))
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
@@ -62,8 +65,8 @@ class ReplayBuffer:
     def __init__(self, max_size: int):
         self.buffer = deque(maxlen=max_size)
         
-    def push(self, state: State, action: int, reward: float, next_state: State):
-        self.buffer.append((state, action, reward, next_state))
+    def push(self, state: State, action: int, reward: float, next_state: State, terminate: bool):
+        self.buffer.append((state, action, reward, next_state, terminate))
         
     def get_batch(self, batch_size: int) -> List[tuple]:
         return sample(self.buffer, batch_size)
@@ -97,7 +100,7 @@ class ValueAction:
         
         # Sampling actions
         batch = self.memory.get_batch(self.batch_size)
-        states, actions, rewards, next_states = zip(*batch)
+        states, actions, rewards, next_states, terminate = zip(*batch)
         
         # Converting to tensors
         state_tensor = torch.stack([s.to_tensor() for s in states]).to(DEVICE)
@@ -108,9 +111,12 @@ class ValueAction:
         # Computing q values
         current_q_values = self.qnetwork_online(state_tensor)
         current_q_values = current_q_values.gather(1, action_tensor)
-        with torch.no_grad():
-            next_q_values = self.qnetwork_other(next_state_tensor)
-            next_q_values = next_q_values.max(1)[0].unsqueeze(1)
+        if terminate:
+            next_q_values = 0
+        else:
+            with torch.no_grad():
+                next_q_values = self.qnetwork_other(next_state_tensor)
+                next_q_values = next_q_values.max(1)[0].unsqueeze(1)
         target_q_values = reward_tensor + self.dim * next_q_values
         
         # Optimize
