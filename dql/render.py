@@ -19,7 +19,7 @@ replace_1 = lambda x: WALL_M if x == 1 else x
 maze_map = list(map(lambda x: list(map(replace_1, x)), maze_map))
 maze_map = np.array(maze_map, dtype=np.int64)
 
-ENV = Environment(map=maze_map)
+ENV = Environment(map=None)
 
 class Renderer:
     def __init__(self, agent: Agent, window_size=200, cell_size=16, num_episodes=1000, max_steps=100):
@@ -65,9 +65,12 @@ class Renderer:
         pyxel.cls(0)
         
         # Draw maze
+        any_agent = False
         for y in range(self.agent.observation_map.shape[0]):
             for x in range(self.agent.observation_map.shape[1]):
                     cell_value = self.agent.observation_map[y, x]
+                    if cell_value == AGENT_M:
+                         any_agent = True
                     color = self.colors.get(cell_value, 0)
                     
                     pyxel.rect(
@@ -77,11 +80,13 @@ class Renderer:
                         self.cell_size,
                         color
                     )
+        if not any_agent:
+             pass
 
 
 
-value_action = ValueAction(125)
-value_action.load('simple_model.pth')
+value_action = ValueAction(100 * 5)
+value_action.load('full_model.pth')
 policy = EPolicy(value_action=value_action, initial_epsilon=0.0)
 agent = Agent(policy=policy)
 agent.reset(environment=ENV)

@@ -71,8 +71,11 @@ def random_action_index():
         return choice([0, 1, 2, 3])
 
 class Environment:
-    def __init__(self, map: np.ndarray, kill_range: int = 1, goal_pos = None, subgoal_pos = None) -> None:
-        self.map = map # We generate current map online without storing since it can be restored by agent history if necessary
+    def __init__(self, map: np.ndarray = None, kill_range: int = 1, goal_pos = None, subgoal_pos = None) -> None:
+        if map is not None:
+            self.map = map # We generate current map online without storing since it can be restored by agent history if necessary
+        else:
+            self.map = self.generate_maze(10, 10)
         if goal_pos is None:
             assert subgoal_pos is None
             self.random_goal_subgoal()
@@ -83,6 +86,49 @@ class Environment:
 
         self.agents: List[Agent] = []
         self.kill_range = kill_range
+
+    def generate_maze(self, height, width):
+        # Initialize maze with walls
+        maze = np.full((height, width), WALL_M, dtype=np.int8)
+        
+        # Define starting point (must be odd coordinates to ensure paths don't merge)
+        start_y, start_x = 1, 1
+        maze[start_y, start_x] = EMPTY_M
+        
+        # Stack for DFS
+        stack = [(start_y, start_x)]
+        
+        # Directions: (y, x) - up, right, down, left
+        directions = [(-2, 0), (0, 2), (2, 0), (0, -2)]
+        
+        while stack:
+            current_y, current_x = stack[-1]
+            
+            # Get all valid neighbors that haven't been visited
+            valid_neighbors = []
+            for dy, dx in directions:
+                new_y, new_x = current_y + dy, current_x + dx
+                
+                # Check if the neighbor is within bounds and not visited
+                if (0 < new_y < height-1 and 
+                    0 < new_x < width-1 and 
+                    maze[new_y, new_x] == WALL_M):
+                    valid_neighbors.append((new_y, new_x))
+            
+            if valid_neighbors:
+                # Choose random neighbor
+                next_y, next_x = choice(valid_neighbors)
+                
+                # Carve path by setting the cell between current and neighbor to empty
+                maze[current_y + (next_y - current_y)//2, 
+                     current_x + (next_x - current_x)//2] = EMPTY_M
+                maze[next_y, next_x] = EMPTY_M
+                
+                stack.append((next_y, next_x))
+            else:
+                stack.pop()
+        
+        return maze
     
     def draw_goal_subgoal(self):
         self.map[self.goal_pos.yx] = GOAL_M
@@ -127,10 +173,9 @@ class Environment:
                     empty_points.append(Point(y, x))
         return sample(empty_points, amount)
     
-    def reset(self, agents: List[Agent], map=None, random=True):
-        if map:
-            self.map = map
+    def reset(self, agents: List[Agent], random=True):
         if random:
+            self.map = self.generate_maze(10, 10)
             self.remove_goal_subgoal()
             self.random_goal_subgoal()
             self.draw_goal_subgoal()
@@ -209,8 +254,8 @@ class Agent:
     def reset_history(self):
         self.pos_history = deque([self.environment.random_position()[0]])
         self.action_history = deque()
-        # self.observation_map = np.ones(shape=self.environment.map.shape, dtype=int) * UNOBSERVED_M # for full obs
-        self.observation_map = np.full(shape=(self.visibility * 2 + 1, self.visibility * 2 + 1), fill_value=UNOBSERVED_M, dtype=int)
+        self.observation_map = np.ones(shape=self.environment.map.shape, dtype=int) * UNOBSERVED_M # for full obs
+        # self.observation_map = np.full(shape=(self.visibility * 2 + 1, self.visibility * 2 + 1), fill_value=UNOBSERVED_M, dtype=int) # for partial
         self.reward_history = []
     
     def get_state(self):
@@ -227,56 +272,60 @@ class Agent:
     def hide_obj(self, pos):
         yx = pos.yx
         tile = int(self.observation_map[yx])
-        if tile != UNOBSERVED_M:
+        if tile == AGENT_M:
+            return
+        elif tile != UNOBSERVED_M:
             self.observation_map[yx] = EMPTY_M
     
     def restore_obj(self, pos):
         yx = pos.yx
         tile = int(self.observation_map[yx])
-        if tile != UNOBSERVED_M:
+        if tile == AGENT_M:
+            return
+        elif tile != UNOBSERVED_M:
             self.observation_map[yx] = GOAL_M
 
     def update_vision(self):
         "Agent can see only current goal. It means if he doesn't have subgoal he can't see goal, otherwise he can't see subgoal. Both will be represented by the same number"
         # Observe whole map
-        # map = self.environment.map
-        # pos = self.pos_history[-1].yx
-        # range_obs = max(pos[0] - self.visibility, 0), min(pos[0] + self.visibility + 1, map.shape[0]), \
-        #     max(pos[1] - self.visibility, 0), min(pos[1] + self.visibility + 1, map.shape[1])
-        # self.observation_map[range_obs[0]:range_obs[1], range_obs[2]:range_obs[3]] = map[range_obs[0]:range_obs[1], range_obs[2]:range_obs[3]]
-        # self.observation_map[self.pos_history[-1].yx] = AGENT_M
+        map = self.environment.map
+        pos = self.pos_history[-1].yx
+        range_obs = max(pos[0] - self.visibility, 0), min(pos[0] + self.visibility + 1, map.shape[0]), \
+            max(pos[1] - self.visibility, 0), min(pos[1] + self.visibility + 1, map.shape[1])
+        self.observation_map[range_obs[0]:range_obs[1], range_obs[2]:range_obs[3]] = map[range_obs[0]:range_obs[1], range_obs[2]:range_obs[3]]
+        self.observation_map[pos] = AGENT_M
 
-        # goal_pos = self.environment.goal_pos
-        # subgoal_pos = self.environment.subgoal_pos
-        # subgoal_inside = True
-        # goal_inside = True
+        goal_pos = self.environment.goal_pos
+        subgoal_pos = self.environment.subgoal_pos
+        subgoal_inside = True
+        goal_inside = True
 
         # Observe only in Visibility range
-        map = self.environment.map.copy()
-        pos = self.pos_history[-1].yx
-        range_obs = pos[0] - self.visibility, pos[0] + self.visibility + 1, \
-            pos[1] - self.visibility, pos[1] + self.visibility + 1
-        obs_size = self.visibility * 2 + 1
-        self.observation_map = np.empty((obs_size, obs_size))
-        for y in range(range_obs[0], range_obs[1]):
-            for x in range(range_obs[2], range_obs[3]):
-                y_obs, x_obs = y - range_obs[0], x - range_obs[2]
-                if y < 0 or y >= map.shape[0] or x < 0 or x >= map.shape[1]:
-                    self.observation_map[y_obs, x_obs] = WALL_M
-                else:
-                    self.observation_map[y_obs, x_obs] = map[y, x]
+        # map = self.environment.map.copy()
+        # pos = self.pos_history[-1].yx
+        # range_obs = pos[0] - self.visibility, pos[0] + self.visibility + 1, \
+        #     pos[1] - self.visibility, pos[1] + self.visibility + 1
+        # obs_size = self.visibility * 2 + 1
+        # self.observation_map = np.empty((obs_size, obs_size))
+        # for y in range(range_obs[0], range_obs[1]):
+        #     for x in range(range_obs[2], range_obs[3]):
+        #         y_obs, x_obs = y - range_obs[0], x - range_obs[2]
+        #         if y < 0 or y >= map.shape[0] or x < 0 or x >= map.shape[1]:
+        #             self.observation_map[y_obs, x_obs] = WALL_M
+        #         else:
+        #             self.observation_map[y_obs, x_obs] = map[y, x]
 
-        y = self.visibility
-        x = self.visibility
-        left_up_pos = Point(pos[0], pos[1]) - Point(y, x)
+        # y = self.visibility
+        # x = self.visibility
+        # left_up_pos = Point(pos[0], pos[1]) - Point(y, x)
         
-        subgoal_pos = self.environment.subgoal_pos - left_up_pos
-        subgoal_inside = 0 <= subgoal_pos.yx[0] < self.observation_map.shape[0]
-        subgoal_inside = subgoal_inside and 0 <= subgoal_pos.yx[1] < self.observation_map.shape[1]
+        # subgoal_pos = self.environment.subgoal_pos - left_up_pos
+        # subgoal_inside = 0 <= subgoal_pos.yx[0] < self.observation_map.shape[0]
+        # subgoal_inside = subgoal_inside and 0 <= subgoal_pos.yx[1] < self.observation_map.shape[1]
 
-        goal_pos = self.environment.goal_pos - left_up_pos
-        goal_inside = 0 <= goal_pos.yx[0] < self.observation_map.shape[0]
-        goal_inside = goal_inside and 0 <= goal_pos.yx[1] < self.observation_map.shape[1]
+        # goal_pos = self.environment.goal_pos - left_up_pos
+        # goal_inside = 0 <= goal_pos.yx[0] < self.observation_map.shape[0]
+        # goal_inside = goal_inside and 0 <= goal_pos.yx[1] < self.observation_map.shape[1]
 
         if self.has_subgoal:
             if subgoal_inside:

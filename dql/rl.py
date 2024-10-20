@@ -18,31 +18,40 @@ class DQNetwork(nn.Module):
         #     nn.ReLU(),
         #     nn.Linear(128, len(ACTIONS))
         # )
+        self.network = nn.Sequential(
+            nn.Linear(input_size, 100),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(100, 81),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(81, 64),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(64, 49),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(49, 36),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(36, 25),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(25, 16),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(16, 9),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(9, len(ACTIONS))
+        )
+        
         # self.network = nn.Sequential(
-        #     nn.Linear(input_size, 128),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(128, 64),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(64, 32),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(32, 16),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(16, 8),
+        #     nn.Linear(input_size, 8),
         #     nn.ReLU(),
         #     nn.Dropout(p=dropout_rate),
         #     nn.Linear(8, len(ACTIONS))
         # )
-        
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 25),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(25, len(ACTIONS))
-        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
@@ -65,12 +74,14 @@ class ReplayBuffer:
 class ValueAction:
     """Implementation of value action function Q with Neural Network."""
 
-    def __init__(self, state_size, batch_size=64, buffer_size=10000, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2):
+    def __init__(self, state_size, batch_size=64, buffer_size=10000, steps_per_update=100, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2):
         "To train existing model we give model as input. It is assumed that output of model is of size of 4"
         self.memory = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
         self.dim = dim
         self.tau = tau
+        self.steps_per_update = steps_per_update
+        self.step = 0
 
         # DQ networks. We had some bugs with using only one network so for now decided to split them
         self.qnetwork_online = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
@@ -103,12 +114,15 @@ class ValueAction:
         target_q_values = reward_tensor + self.dim * next_q_values
         
         # Optimize
-        # loss = nn.MSELoss()(current_q_values, target_q_values)
-        loss = nn.SmoothL1Loss()(current_q_values, target_q_values)
+        loss = nn.MSELoss()(current_q_values, target_q_values.detach())
+        # loss = nn.SmoothL1Loss()(current_q_values, target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        self.update_other()
+        self.step += 1
+        if self.step % self.steps_per_update:
+            self.update_other()
+            self.step = 0
         
         return loss.item()
     
