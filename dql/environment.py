@@ -7,16 +7,16 @@ from typing import List
 
 ### Env mapping
 EMPTY_M = 0
-SUBGOAL_M = -1
-GOAL_M = -2
-WALL_M = -3
-UNOBSERVED_M = -4
-AGENT_M = -5
+SUBGOAL_M = 1
+GOAL_M = 2
+WALL_M = 3
+UNOBSERVED_M = 4
+AGENT_M = 5
 ### Env reward
-EMPTY_R = -1
-WALL_R = -10
-SUBGOAL_R = 25
-GOAL_R = 100
+EMPTY_R = 0.1
+WALL_R = -1.0
+SUBGOAL_R = 5.0
+GOAL_R = 10.0
 ### Agent params
 VISIBILITY = 2
 
@@ -173,6 +173,15 @@ class Environment:
 
         return updated
 
+def maze_observation_encoded(observation_map: np.ndarray):
+    rows, columns = observation_map.shape
+    tile_type = [EMPTY_M, WALL_M, GOAL_M, UNOBSERVED_M, AGENT_M]
+    res = np.zeros((rows, columns, len(tile_type)), dtype=np.int32)
+    for i in range(len(tile_type)):
+        tile = tile_type[i]
+        res[observation_map == tile, i] = 1
+    return res
+
 class Agent:
     "Class that provides communication between Policy and Environment"
     def __init__(self, policy: Policy, visibility: int = VISIBILITY) -> None:
@@ -198,7 +207,7 @@ class Agent:
         self.reward_history = []
     
     def get_state(self):
-        return State(features=[self.observation_map])
+        return State(features=[maze_observation_encoded(self.observation_map)])
 
     def reset(self, environment: Environment):
         self.environment = environment
@@ -210,14 +219,15 @@ class Agent:
 
     def hide_obj(self, pos):
         yx = pos.yx
-        if self.observation_map[yx] != UNOBSERVED_M:
+        tile = int(self.observation_map[yx])
+        if tile != UNOBSERVED_M:
             self.observation_map[yx] = EMPTY_M
     
     def restore_obj(self, pos):
         yx = pos.yx
-        real_tile = self.environment.map[yx]
-        if self.observation_map[yx] != UNOBSERVED_M:
-            self.observation_map[yx] = real_tile
+        tile = int(self.observation_map[yx])
+        if tile != UNOBSERVED_M:
+            self.observation_map[yx] = GOAL_M
 
     def update_vision(self):
         "Agent can see only current goal. It means if he doesn't have subgoal he can't see goal, otherwise he can't see subgoal. Both will be represented by the same number"
@@ -226,6 +236,7 @@ class Agent:
         range = max(pos[0] - self.visibility, 0), min(pos[0] + self.visibility + 1, map.shape[0]), \
             max(pos[1] - self.visibility, 0), min(pos[1] + self.visibility + 1, map.shape[1])
         self.observation_map[range[0]:range[1], range[2]:range[3]] = map[range[0]:range[1], range[2]:range[3]]
+        self.observation_map[self.pos_history[-1].yx] = AGENT_M
         if self.has_subgoal:
             self.hide_obj(self.environment.subgoal_pos)
             self.restore_obj(self.environment.goal_pos)

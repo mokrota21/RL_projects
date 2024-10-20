@@ -9,16 +9,39 @@ from typing import List
 class DQNetwork(nn.Module):
     """Neural Network structure for value action function approximation Q"""
 
-    def __init__(self, input_size: int, hidden_size: int = 128):
+    def __init__(self, input_size: int, dropout_rate = 0.2):
         super().__init__()
+        # self.network = nn.Sequential(
+        #     nn.Linear(input_size, 128),
+        #     nn.ReLU(),
+        #     nn.Linear(128, 128),
+        #     nn.ReLU(),
+        #     nn.Linear(128, len(ACTIONS))
+        # )
         self.network = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.Tanh(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.Tanh(),
-            nn.Linear(hidden_size, len(ACTIONS))
+            nn.Linear(input_size, 128),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(16, 8),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(8, len(ACTIONS))
         )
-    
+        
+        # self.network = nn.Sequential(
+        #     nn.Linear(input_size, len(ACTIONS))
+        #     # nn.Linear(8, len(ACTIONS))
+        # )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
 
@@ -41,7 +64,7 @@ class ReplayBuffer:
 class ValueAction:
     """Implementation of value action function Q with Neural Network."""
 
-    def __init__(self, state_size, hidden_size, batch_size=10, buffer_size=100, dim=0.9, alpha=0.01, tau=0.5):
+    def __init__(self, state_size, batch_size=64, buffer_size=10000, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2):
         "To train existing model we give model as input. It is assumed that output of model is of size of 4"
         self.memory = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
@@ -49,9 +72,10 @@ class ValueAction:
         self.tau = tau
 
         # DQ networks. We had some bugs with using only one network so for now decided to split them
-        self.qnetwork_online = DQNetwork(state_size, hidden_size).to(DEVICE)
-        self.optimizer = torch.optim.Adam(self.qnetwork_online.parameters(), lr=alpha)
-        self.qnetwork_other = DQNetwork(state_size, hidden_size).to(DEVICE)
+        self.qnetwork_online = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
+        # self.optimizer = torch.optim.Adam(self.qnetwork_online.parameters(), lr=alpha)
+        self.optimizer = torch.optim.SGD(self.qnetwork_online.parameters(), lr=alpha)
+        self.qnetwork_other = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
         self.qnetwork_other.load_state_dict(self.qnetwork_online.state_dict())
     
     def learn(self):
@@ -72,12 +96,13 @@ class ValueAction:
         # Computing q values
         current_q_values = self.qnetwork_online(state_tensor)
         current_q_values = current_q_values.gather(1, action_tensor)
-        next_q_values = self.qnetwork_other(next_state_tensor)
-        next_q_values = next_q_values.max(1)[0].unsqueeze(1)
+        with torch.no_grad():
+            next_q_values = self.qnetwork_other(next_state_tensor)
+            next_q_values = next_q_values.max(1)[0].unsqueeze(1)
         target_q_values = reward_tensor + self.dim * next_q_values
         
         # Optimize
-        loss = nn.MSELoss()(current_q_values, target_q_values.detach())
+        loss = nn.MSELoss()(current_q_values, target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -118,7 +143,8 @@ class EPolicy(Policy):
         pos = agent.pos_history[-1]
 
         if random() < self.epsilon:
-            return choice(env.valid_actions(pos=pos))
+            return choice([0, 1, 2, 3])
+            # return choice(env.valid_actions(pos=pos))
         with torch.no_grad():
             state_tensor = state.to_tensor()
             action_values = self.value_action.qnetwork_online(state_tensor)

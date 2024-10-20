@@ -7,9 +7,11 @@ import numpy as np
 from collections import deque
 import threading
 from queue import Queue
+import json
+import os
 
 class MetricsVisualizer:
-    def __init__(self, window_size=100000):
+    def __init__(self, window_size=1000):
         self.window_size = window_size
         
         # Metrics storage
@@ -22,7 +24,8 @@ class MetricsVisualizer:
         # Setup pygame
         pygame.init()
         self.plot_size = (800, 600)
-        self.screen = pygame.display.set_mode(self.plot_size)
+        # Add window flags to handle focus events better
+        self.screen = pygame.display.set_mode(self.plot_size, pygame.RESIZABLE | pygame.HWSURFACE | pygame.DOUBLEBUF)
         pygame.display.set_caption('Training Metrics')
         
         # Setup the plot
@@ -36,6 +39,7 @@ class MetricsVisualizer:
         
         # Communication queue for thread-safe updates
         self.metrics_queue = Queue()
+        self.event_queue = Queue()  # New queue for handling window events
         self.running = True
         
         # For converting matplotlib to pygame surface
@@ -98,13 +102,10 @@ class MetricsVisualizer:
         
         while self.running:
             try:
-                # Handle pygame events
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        self.running = False
-                        pygame.quit()
-                        return
-                
+                # Handle events in the main thread
+                if not self._handle_events():
+                    break
+
                 # Update metrics
                 updated = False
                 while not self.metrics_queue.empty():
@@ -130,13 +131,19 @@ class MetricsVisualizer:
                 if updated:
                     self._update_plots()
                 
-                clock.tick(30)  # Limit to 30 FPS
+                # Limit frame rate but allow for event processing
+                clock.tick(30)
+                pygame.time.wait(10)  # Small delay to prevent high CPU usage
+                
             except Exception as e:
                 print(f"Error in update loop: {e}")
                 continue
     
     def _update_plots(self):
         """Update all plot lines and render to pygame surface"""
+        if not self.running:
+            return
+
         try:
             # Update loss plot
             if len(self.losses) > 0:
@@ -192,28 +199,126 @@ class MetricsVisualizer:
         pygame.quit()
         plt.close(self.fig)
 
-    def save(self):
-            """Destructor to save plots before closing."""
-            try:
-                # Save the entire figure as one image
-                self.fig.savefig('training_metrics.png', bbox_inches='tight') 
-                
-                # Save each subplot as a separate image
-                for i, ax in enumerate(self.axs.flat):
-                    # Create a new figure for each subplot
-                    fig, ax_new = plt.subplots(figsize=(8, 6), dpi=100)
+    def _get_unique_filename(self, base_path):
+        """
+        Generate a unique filename by adding a numeric suffix if the file already exists.
+        
+        Args:
+            base_path (str): The base file path to check
+            
+        Returns:
+            str: A unique file path
+        """
+        if not os.path.exists(base_path):
+            return base_path
+            
+        # Split the base_path into name and extension
+        name, ext = os.path.splitext(base_path)
+        counter = 1
+        
+        # Keep trying new numbers until we find an unused filename
+        while True:
+            new_path = f"{name}_{counter}{ext}"
+            if not os.path.exists(new_path):
+                return new_path
+            counter += 1
 
-                    # Plot all lines from the original axis
-                    for line in ax.get_lines():
-                        ax_new.plot(*line.get_data(), label=line.get_label())
+    def save(self, filename='metrics_data.json'):
+        """
+        Save all metrics data to a JSON file. If the file already exists,
+        a new file with a numeric suffix will be created.
+        
+        Args:
+            filename (str): The name of the file to save the metrics to
+            
+        Returns:
+            str: The actual filename where the data was saved
+        """
+        try:
+            # Get unique filenames for all files we'll save
+            json_path = self._get_unique_filename(filename)
+            base_name = os.path.splitext(json_path)[0]
+            plot_path = self._get_unique_filename(f"{base_name}_full.png")
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(json_path) if os.path.dirname(json_path) else '.', exist_ok=True)
+            
+            # Prepare metrics data
+            metrics_data = {
+                'losses': list(self.losses),
+                'avg_rewards': list(self.avg_rewards),
+                'goals': list(self.goals),
+                'subgoals': list(self.subgoals),
+                'epsilon_values': list(self.epsilon_values),
+            }
+            
+            # Save JSON data
+            with open(json_path, 'w') as f:
+                json.dump(metrics_data, f, indent=4)
+            
+            return json_path
+            
+        except Exception as e:
+            print(f"Error saving metrics data: {e}")
+            return None
 
-                    ax_new.set_title(ax.get_title())
-                    ax_new.set_xlabel(ax.get_xlabel())
-                    ax_new.set_ylabel(ax.get_ylabel())
-                    ax_new.legend()
-                    fig.savefig(f'subplot_{i}.png', bbox_inches='tight')
-                    plt.close(fig)  # Close the figure to free memory
-                    
-                print("Plots saved successfully.")
-            except Exception as e:
-                print(f"Error saving plots: {e}")
+    @classmethod
+    def load(cls, filename='metrics_data.json'):
+        """
+        Load metrics data from a JSON file and create a new visualizer instance.
+        
+        Args:
+            filename (str): The name of the file to load the metrics from
+            
+        Returns:
+            MetricsVisualizer: A new instance with the loaded metrics
+        """
+        try:
+            with open(filename, 'r') as f:
+                metrics_data = json.load(f)
+            
+            # Create new instance with saved window size
+            visualizer = cls(window_size=metrics_data['window_size'])
+            
+            # Load metrics into deques
+            visualizer.losses.extend(metrics_data['losses'])
+            visualizer.avg_rewards.extend(metrics_data['avg_rewards'])
+            visualizer.goals.extend(metrics_data['goals'])
+            visualizer.subgoals.extend(metrics_data['subgoals'])
+            visualizer.epsilon_values.extend(metrics_data['epsilon_values'])
+            
+            # Force an update of the plots
+            visualizer._update_plots()
+            
+            print(f"Metrics data loaded successfully from {filename}")
+            print(f"Data timestamp: {metrics_data['timestamp']}")
+            
+            # Print information about associated plot files
+            if 'plot_files' in metrics_data:
+                print("\nAssociated plot files:")
+                print(f"- Full plot: {metrics_data['plot_files']['full_plot']}")
+                print("- Subplots:")
+                for subplot in metrics_data['plot_files']['subplots']:
+                    print(f"  - {subplot}")
+            
+            return visualizer
+            
+        except Exception as e:
+            print(f"Error loading metrics data: {e}")
+            return None
+    
+    def _handle_events(self):
+        """Handle pygame events in the main thread"""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.running = False
+                pygame.quit()
+                return False
+            elif event.type == pygame.VIDEORESIZE:
+                self.plot_size = (event.w, event.h)
+                self.screen = pygame.display.set_mode(self.plot_size, pygame.RESIZABLE | pygame.HWSURFACE | pygame.DOUBLEBUF)
+            elif event.type == pygame.ACTIVEEVENT:
+                # Force a redraw when window gets focus
+                if event.gain:
+                    self._update_plots()
+        return True
