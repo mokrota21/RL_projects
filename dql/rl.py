@@ -18,29 +18,31 @@ class DQNetwork(nn.Module):
         #     nn.ReLU(),
         #     nn.Linear(128, len(ACTIONS))
         # )
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 128),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(16, 8),
-            nn.ReLU(),
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(8, len(ACTIONS))
-        )
-        
         # self.network = nn.Sequential(
-        #     nn.Linear(input_size, len(ACTIONS))
-        #     # nn.Linear(8, len(ACTIONS))
+        #     nn.Linear(input_size, 128),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(128, 64),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(64, 32),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(32, 16),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(16, 8),
+        #     nn.ReLU(),
+        #     nn.Dropout(p=dropout_rate),
+        #     nn.Linear(8, len(ACTIONS))
         # )
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_size, 25),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(25, len(ACTIONS))
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
@@ -48,11 +50,10 @@ class DQNetwork(nn.Module):
 class ReplayBuffer:
     """Experience replay buffer for DQL to avoid being stuck in local minima"""
     
-    def __init__(self, capacity: int):
-        self.buffer = deque(maxlen=capacity)
+    def __init__(self, max_size: int):
+        self.buffer = deque(maxlen=max_size)
         
-    def push(self, state: State, action: int, reward: float, 
-             next_state: State):
+    def push(self, state: State, action: int, reward: float, next_state: State):
         self.buffer.append((state, action, reward, next_state))
         
     def get_batch(self, batch_size: int) -> List[tuple]:
@@ -73,8 +74,8 @@ class ValueAction:
 
         # DQ networks. We had some bugs with using only one network so for now decided to split them
         self.qnetwork_online = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
-        # self.optimizer = torch.optim.Adam(self.qnetwork_online.parameters(), lr=alpha)
-        self.optimizer = torch.optim.SGD(self.qnetwork_online.parameters(), lr=alpha)
+        self.optimizer = torch.optim.Adam(self.qnetwork_online.parameters(), lr=alpha)
+        # self.optimizer = torch.optim.SGD(self.qnetwork_online.parameters(), lr=alpha)
         self.qnetwork_other = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
         self.qnetwork_other.load_state_dict(self.qnetwork_online.state_dict())
     
@@ -102,15 +103,16 @@ class ValueAction:
         target_q_values = reward_tensor + self.dim * next_q_values
         
         # Optimize
-        loss = nn.MSELoss()(current_q_values, target_q_values)
+        # loss = nn.MSELoss()(current_q_values, target_q_values)
+        loss = nn.SmoothL1Loss()(current_q_values, target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        self.update_target()
+        self.update_other()
         
         return loss.item()
     
-    def update_target(self):
+    def update_other(self):
         """Copy paste weights"""
         for other_param, online_param in zip(self.qnetwork_other.parameters(), self.qnetwork_online.parameters()):
             other_param.data.copy_(self.tau * online_param.data + (1.0 - self.tau) * other_param.data)

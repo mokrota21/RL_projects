@@ -35,6 +35,7 @@ class Renderer:
         pyxel.init(
             self.maze_width, 
             self.maze_height,
+            fps=10,
             title="Maze Agent Training Visualization"
         )
         
@@ -48,31 +49,16 @@ class Renderer:
             AGENT_M: 8
         }
         
-        # Episode tracking
-        self.current_episode = 0
-        self.episodes_completed = 0
-        self.goal = False
-        self.steps = 0
-        self.max_steps = max_steps
-        self.episode_reward = 0
-        self.current_loss = 0
-        self.training_complete = False
-        
-        # Training parameters
-        self.num_episodes = num_episodes
-        self.print_every = 10
-        
         # Start Pyxel
         print('start')
         pyxel.run(self.update, self.draw)
     
     def reset_episode(self):
-        self.current_state = self.agent
-        self.goal = False
-        self.steps = 0
-        self.episode_reward = 0
+        ENV.reset(agents=[self.agent])
     
     def update(self):
+        if pyxel.btnp(pyxel.KEY_R):
+            self.reset_episode()    
         ENV.update(hit_wall=True)
         
     def draw(self):
@@ -91,32 +77,11 @@ class Renderer:
                         self.cell_size,
                         color
                     )
-        
-        metrics_y = self.maze_height
-
-        # Draw subgoal status
-        status_color = 11 if self.agent.has_subgoal else 8
-        pyxel.rect(0, 0, 4, 4, status_color)
-        
-        progress = f"Episode: {self.episodes_completed}/{self.num_episodes}"
-        pyxel.text(10, metrics_y - 10, progress, 7)
-        
-        # Draw current episode reward
-        reward_text = f"Current Reward: {self.episode_reward:.1f}"
-        pyxel.text(10, metrics_y - 20, reward_text, 7)
-        
-        # Draw current loss
-        loss_text = f"Current Loss: {self.current_loss:.3f}"
-        pyxel.text(10, metrics_y - 30, loss_text, 7)
-        
-        # Draw current step
-        step_text = f"Current Step: {self.steps}"
-        pyxel.text(10, metrics_y - 40, step_text, 7)
 
 
 
-value_action = ValueAction(100, 128)
-value_action.load('best_model.pth')
+value_action = ValueAction(125)
+value_action.load('simple_model.pth')
 policy = EPolicy(value_action=value_action, initial_epsilon=0.0)
 agent = Agent(policy=policy)
 agent.reset(environment=ENV)

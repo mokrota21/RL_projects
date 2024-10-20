@@ -13,7 +13,7 @@ WALL_M = 3
 UNOBSERVED_M = 4
 AGENT_M = 5
 ### Env reward
-EMPTY_R = 0.1
+EMPTY_R = -0.1
 WALL_R = -1.0
 SUBGOAL_R = 5.0
 GOAL_R = 10.0
@@ -42,6 +42,12 @@ class Point:
             y1, x1 = self.yx
             y2, x2 = other.yx
             return Point(y1 + y2, x1 + x2)
+
+    def __sub__(self, other):
+            y1, x1 = self.yx
+            y2, x2 = other.yx
+            return Point(y1 - y2, x1 - x2)
+
 
     def __str__(self):
         return str(self.yx)
@@ -203,7 +209,8 @@ class Agent:
     def reset_history(self):
         self.pos_history = deque([self.environment.random_position()[0]])
         self.action_history = deque()
-        self.observation_map = np.ones(shape=self.environment.map.shape, dtype=int) * UNOBSERVED_M
+        # self.observation_map = np.ones(shape=self.environment.map.shape, dtype=int) * UNOBSERVED_M # for full obs
+        self.observation_map = np.full(shape=(self.visibility * 2 + 1, self.visibility * 2 + 1), fill_value=UNOBSERVED_M, dtype=int)
         self.reward_history = []
     
     def get_state(self):
@@ -231,18 +238,56 @@ class Agent:
 
     def update_vision(self):
         "Agent can see only current goal. It means if he doesn't have subgoal he can't see goal, otherwise he can't see subgoal. Both will be represented by the same number"
-        map = self.environment.map
+        # Observe whole map
+        # map = self.environment.map
+        # pos = self.pos_history[-1].yx
+        # range_obs = max(pos[0] - self.visibility, 0), min(pos[0] + self.visibility + 1, map.shape[0]), \
+        #     max(pos[1] - self.visibility, 0), min(pos[1] + self.visibility + 1, map.shape[1])
+        # self.observation_map[range_obs[0]:range_obs[1], range_obs[2]:range_obs[3]] = map[range_obs[0]:range_obs[1], range_obs[2]:range_obs[3]]
+        # self.observation_map[self.pos_history[-1].yx] = AGENT_M
+
+        # goal_pos = self.environment.goal_pos
+        # subgoal_pos = self.environment.subgoal_pos
+        # subgoal_inside = True
+        # goal_inside = True
+
+        # Observe only in Visibility range
+        map = self.environment.map.copy()
         pos = self.pos_history[-1].yx
-        range = max(pos[0] - self.visibility, 0), min(pos[0] + self.visibility + 1, map.shape[0]), \
-            max(pos[1] - self.visibility, 0), min(pos[1] + self.visibility + 1, map.shape[1])
-        self.observation_map[range[0]:range[1], range[2]:range[3]] = map[range[0]:range[1], range[2]:range[3]]
-        self.observation_map[self.pos_history[-1].yx] = AGENT_M
+        range_obs = pos[0] - self.visibility, pos[0] + self.visibility + 1, \
+            pos[1] - self.visibility, pos[1] + self.visibility + 1
+        obs_size = self.visibility * 2 + 1
+        self.observation_map = np.empty((obs_size, obs_size))
+        for y in range(range_obs[0], range_obs[1]):
+            for x in range(range_obs[2], range_obs[3]):
+                y_obs, x_obs = y - range_obs[0], x - range_obs[2]
+                if y < 0 or y >= map.shape[0] or x < 0 or x >= map.shape[1]:
+                    self.observation_map[y_obs, x_obs] = WALL_M
+                else:
+                    self.observation_map[y_obs, x_obs] = map[y, x]
+
+        y = self.visibility
+        x = self.visibility
+        left_up_pos = Point(pos[0], pos[1]) - Point(y, x)
+        
+        subgoal_pos = self.environment.subgoal_pos - left_up_pos
+        subgoal_inside = 0 <= subgoal_pos.yx[0] < self.observation_map.shape[0]
+        subgoal_inside = subgoal_inside and 0 <= subgoal_pos.yx[1] < self.observation_map.shape[1]
+
+        goal_pos = self.environment.goal_pos - left_up_pos
+        goal_inside = 0 <= goal_pos.yx[0] < self.observation_map.shape[0]
+        goal_inside = goal_inside and 0 <= goal_pos.yx[1] < self.observation_map.shape[1]
+
         if self.has_subgoal:
-            self.hide_obj(self.environment.subgoal_pos)
-            self.restore_obj(self.environment.goal_pos)
+            if subgoal_inside:
+                self.hide_obj(subgoal_pos)
+            if goal_inside:
+                self.restore_obj(goal_pos)
         else:
-            self.hide_obj(self.environment.goal_pos)
-            self.restore_obj(self.environment.subgoal_pos)
+            if goal_inside:
+                self.hide_obj(goal_pos)
+            if subgoal_inside:
+                self.restore_obj(subgoal_pos)
     
     def update(self):
         "Always updates history even if invalid action. If it is invalid revert is called"

@@ -1,15 +1,15 @@
 from train import train_dql, ValueAction, Environment, WALL_M, np
 
 # Maze Parameters
-STATE_SIZE = 100 * 5
+STATE_SIZE = 5 ** 2 * 5 # observation size * types of tiles
 #hyper parameters
-BATCH_SIZE = 128
-BUFFER_SIZE = 50000
+BATCH_SIZE = 32
+BUFFER_SIZE = 10000
 DIM = 0.9
 ALPHA = 0.001
-NUM_EPISODES = 1000
+NUM_EPISODES = 10000
 MAX_STEPS = 100
-TAU = 0.001
+TAU = 0.1
 DROPOUT = 0.2
 
 # def train_dql(env: Environment, value_action: ValueAction, num_episodes: int, max_steps: int = 100, print_every: int = 1,
@@ -66,7 +66,7 @@ DROPOUT = 0.2
 
 value_action = ValueAction(state_size=STATE_SIZE, batch_size=BATCH_SIZE, buffer_size=BUFFER_SIZE, dim=DIM, alpha=ALPHA, tau=TAU)
 try:
-    value_action.load('wall_detector.pth')
+    value_action.load('simple_model.pth')
     [print('loaded model')]
 except:
     print('failed to load')
@@ -84,4 +84,4 @@ replace_1 = lambda x: WALL_M if x == 1 else x
 maze_map = list(map(lambda x: list(map(replace_1, x)), maze_map))
 maze_map = np.array(maze_map, dtype=np.int64)
 env = Environment(map=maze_map)
-train_dql(env=env, value_action=value_action, num_episodes=NUM_EPISODES, max_steps=MAX_STEPS, save_model='best_model.pth')
+train_dql(env=env, value_action=value_action, num_episodes=NUM_EPISODES, max_steps=MAX_STEPS, save_model='simple_model.pth')
