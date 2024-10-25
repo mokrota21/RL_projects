@@ -2,3 +2,4 @@
 env12
 *.pkl
 *.pth
+*.pyc

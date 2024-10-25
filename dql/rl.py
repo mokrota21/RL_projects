@@ -6,47 +6,52 @@ import matplotlib as plt
 from copy import deepcopy
 from typing import List
 
-class DQNetwork(nn.Module):
-    """Neural Network structure for value action function approximation Q"""
+# Pros: Relatively simple. Cons: May be not representative enough
+def one_hidden(input_size, dropout_rate):
+    network = nn.Sequential(
+            nn.Linear(input_size, 128),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(128, len(ACTIONS))
+        )
+    return network
 
-    def __init__(self, input_size: int, dropout_rate = 0.2):
-        super().__init__()
-        # self.network = nn.Sequential(
-        #     nn.Linear(input_size, 128),
-        #     nn.ReLU(),
-        #     nn.Linear(128, 128),
-        #     nn.ReLU(),
-        #     nn.Linear(128, len(ACTIONS))
-        # )
-        # self.network = nn.Sequential(
-        #     nn.Linear(input_size, 100),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(100, 81),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(81, 64),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(64, 49),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(49, 36),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(36, 25),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(25, 16),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(16, 9),
-        #     nn.ReLU(),
-        #     nn.Dropout(p=dropout_rate),
-        #     nn.Linear(9, len(ACTIONS))
-        # )
-        
-        self.network = nn.Sequential(
+# Pros: Can represent for sure. Cons: May be too complicated.
+def exp_hidden(input_size, dropout_rate):
+    network = nn.Sequential(
+            nn.Linear(input_size, 100),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(100, 81),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(81, 64),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(64, 49),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(49, 36),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(36, 25),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(25, 16),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(16, 9),
+            nn.ReLU(),
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(9, len(ACTIONS))
+        )
+    return network
+
+def small_one_hidden(input_size, dropout_rate):
+    network = nn.Sequential(
             nn.Linear(input_size, 6),
             nn.ReLU(),
             nn.Dropout(p=dropout_rate),
@@ -55,6 +60,28 @@ class DQNetwork(nn.Module):
             nn.Dropout(p=dropout_rate),
             nn.Linear(4, len(ACTIONS))
         )
+    return network
+
+# Linear approximator
+def linear(input_size, dropout_rate):
+    network = nn.Sequential(
+            nn.Linear(input_size, len(ACTIONS))
+        )
+    return network
+
+ARCHITECTURES = {
+    'one_hidden': one_hidden,
+    'exp_hidden': exp_hidden,
+    'small_one_hidden': small_one_hidden,
+    'linear': linear
+}
+
+class DQNetwork(nn.Module):
+    """Neural Network structure for value action function approximation Q"""
+
+    def __init__(self, input_size, architecture: str, dropout_rate = 0.2):
+        super().__init__()
+        self.network = ARCHITECTURES[architecture](input_size, dropout_rate)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
@@ -63,10 +90,13 @@ class ReplayBuffer:
     """Experience replay buffer for DQL to avoid being stuck in local minima"""
     
     def __init__(self, max_size: int):
-        self.buffer = deque(maxlen=max_size)
+        self.buffer = list()
+        self.max_size = max_size
         
     def push(self, state: State, action: int, reward: float, next_state: State, terminate: bool):
         self.buffer.append((state, action, reward, next_state, terminate))
+        if len(self.buffer) > self.max_size:
+            self.buffer.pop(0)
         
     def get_batch(self, batch_size: int) -> List[tuple]:
         return sample(self.buffer, batch_size)
@@ -77,7 +107,7 @@ class ReplayBuffer:
 class ValueAction:
     """Implementation of value action function Q with Neural Network."""
 
-    def __init__(self, state_size, batch_size=64, buffer_size=10000, steps_per_update=100, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2):
+    def __init__(self, state_size, architecture, batch_size=64, buffer_size=10000, steps_per_update=100, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2, n=1):
         "To train existing model we give model as input. It is assumed that output of model is of size of 4"
         self.memory = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
@@ -85,12 +115,13 @@ class ValueAction:
         self.tau = tau
         self.steps_per_update = steps_per_update
         self.step = 0
+        self.n = n # how many steps we do before bootstraping
 
         # DQ networks. We had some bugs with using only one network so for now decided to split them
-        self.qnetwork_online = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
+        self.qnetwork_online = DQNetwork(state_size, architecture=architecture, dropout_rate=dropout).to(DEVICE)
         self.optimizer = torch.optim.Adam(self.qnetwork_online.parameters(), lr=alpha)
         # self.optimizer = torch.optim.SGD(self.qnetwork_online.parameters(), lr=alpha)
-        self.qnetwork_other = DQNetwork(state_size, dropout_rate=dropout).to(DEVICE)
+        self.qnetwork_other = DQNetwork(state_size, architecture=architecture, dropout_rate=dropout).to(DEVICE)
         self.qnetwork_other.load_state_dict(self.qnetwork_online.state_dict())
     
     def learn(self):
@@ -117,10 +148,10 @@ class ValueAction:
             with torch.no_grad():
                 next_q_values = self.qnetwork_other(next_state_tensor)
                 next_q_values = next_q_values.max(1)[0].unsqueeze(1)
-        target_q_values = reward_tensor + self.dim * next_q_values
+        target_q_values = reward_tensor + self.dim ** self.n * next_q_values
         
         # Optimize
-        loss = nn.MSELoss()(current_q_values, target_q_values.detach())
+        loss = nn.MSELoss()(current_q_values.float(), target_q_values.detach().float())
         # loss = nn.SmoothL1Loss()(current_q_values, target_q_values)
         self.optimizer.zero_grad()
         loss.backward()

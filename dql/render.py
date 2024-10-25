@@ -1,8 +1,9 @@
 import numpy as np
 import pyxel
-from environment import EMPTY_M, WALL_M, SUBGOAL_M, GOAL_M, UNOBSERVED_M, AGENT_M, Agent, Environment
+from environment import EMPTY_M, WALL_M, SUBGOAL_M, GOAL_M, UNOBSERVED_M, AGENT_M, Agent, Environment, Point
 from rl import EPolicy, ValueAction
 from collections import deque
+from agents import AgentVision
 import threading
 
 maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -19,7 +20,8 @@ replace_1 = lambda x: WALL_M if x == 1 else x
 maze_map = list(map(lambda x: list(map(replace_1, x)), maze_map))
 maze_map = np.array(maze_map, dtype=np.int64)
 
-ENV = Environment(map=None)
+# ENV = Environment(map=maze_map)
+ENV = Environment(map=maze_map, subgoal_pos=Point(5, 3), goal_pos=Point(8, 7)) # homework
 
 class Renderer:
     def __init__(self, agent: Agent, window_size=200, cell_size=16, num_episodes=1000, max_steps=100):
@@ -54,7 +56,7 @@ class Renderer:
         pyxel.run(self.update, self.draw)
     
     def reset_episode(self):
-        ENV.reset(agents=[self.agent])
+        ENV.reset(agents=[self.agent], random=False)
     
     def update(self):
         if pyxel.btnp(pyxel.KEY_R):
@@ -85,10 +87,10 @@ class Renderer:
 
 
 
-value_action = ValueAction(6)
-value_action.load('wall_distance_two_layers.pth')
+value_action = ValueAction(500, architecture='small_one_hidden')
+# value_action.load('nlearning.pth')
 policy = EPolicy(value_action=value_action, initial_epsilon=0.0)
-agent = Agent(policy=policy)
+agent = AgentVision(policy=policy, visibility=100)
 agent.reset(environment=ENV)
-ENV.reset([agent])
+ENV.reset([agent], random=False)
 Renderer(agent=agent)
