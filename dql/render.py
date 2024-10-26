@@ -22,7 +22,7 @@ maze_map = np.array(maze_map, dtype=np.int64)
 
 ENV = Environment()
 RANDOM = True
-# ENV = Environment(map=maze_map, subgoal_pos=Point(5, 3), goal_pos=Point(8, 7)) # homework
+ENV = Environment(map=maze_map, subgoal_pos=Point(5, 3), goal_pos=Point(8, 7)) # homework
 # RANDOM = False
 
 class Renderer:

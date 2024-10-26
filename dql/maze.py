@@ -1,71 +1,86 @@
+from rl import ValueAction, EPolicy
+from environment import Agent, Environment, WALL_M, SUBGOAL_M, GOAL_M
+from typing import List
 import numpy as np
-from random import shuffle
+import torch.nn as nn
+from metrics import MetricsVisualizer
+import keyboard
+import os
+import json
+from random_policy import RandomPolicy
 
-def generate_maze(height, width):
-    # Initialize maze with all walls
-    maze = np.ones((height, width), dtype=np.int8)
+def random_baseline(env: Environment, agent: Agent, num_episodes: int, max_steps: int = 100, print_every: int = 1,
+              save_metrics: str = None, save_model: str = None, plot=False, save_per=100, random=True) -> List[float]:
+    # RL
+    reward_total = 0
+    reward_count = 0
+    data = {'loss': [],
+            'reward': [],
+            'goal': [],
+            'subgoal': [],
+            'epsilon': []
+            }
+    data_count = 0
     
-    # Initialize sets for cells (using only odd coordinates for cells)
-    sets = {}
+    stop = False
     
-    # Calculate actual cell positions accounting for walls
-    for y in range(1, height-1, 2):
-        for x in range(1, width-1, 2):
-            sets[(y, x)] = (y, x)
-            maze[y, x] = 0  # Mark cells as passages
-    
-    def find(cell):
-        if sets[cell] != cell:
-            sets[cell] = find(sets[cell])
-        return sets[cell]
-    
-    def union(cell1, cell2):
-        root1, root2 = find(cell1), find(cell2)
-        if root1 != root2:
-            sets[root2] = root1
-            return True
-        return False
-    
-    # Get all possible walls between cells
-    walls = []
-    for y in range(1, height-1, 2):
-        for x in range(1, width-1, 2):
-            # Add horizontal walls if not at last column
-            if x + 2 < width-1:
-                walls.append((y, x, y, x+2))
-            # Add vertical walls if not at last row
-            if y + 2 < height-1:
-                walls.append((y, x, y+2, x))
+    for episode in range(num_episodes):
+        # print('-' * 100)
+        env.reset(agents=[agent], random=random)
+        # print(env.map)
+
+        current_state = agent.get_state()
+        episode_reward_total = 0
+        n_reward = 0
+        l_rewards = []
+
+        for step_count in range(max_steps):
+            # RL
+            updated = env.update()
+            # action = agent.action_history[-1]
+            # next_state = agent.get_state()
+            reward = agent.reward_history[-1]
+
+            # if len(l_rewards) == n:
+                # value_action.memory.push(state=current_state, action=action, reward=n_reward, next_state=next_state, terminate=not updated)
+
+                # loss = value_action.learn()
+                # agent.policy.decay_epsilon()
                 
-    # Randomize walls
-    shuffle(walls)
+                # Caching
+            data_count += 1
+            if data_count % save_per == 0:
+                # data['loss'].append(loss)
+                data['reward'].append(episode_reward_total / (step_count + 1))
+                data['goal'].append(agent.has_goal)
+                data['subgoal'].append(agent.has_subgoal)
+                data_count = 0
+                
+                # Visualisation
+                # if plot:
+                    # plotter.update_metrics(loss=loss, reward=reward_total / reward_count, goal=agent.has_goal, subgoal=agent.has_subgoal, epsilon=agent.policy.epsilon)
+
+            # current_state = next_state
+            reward_total += reward
+            reward_count += 1
+            episode_reward_total += reward
+
+           
+
+            if keyboard.is_pressed('q'):
+                stop = True
+            if not updated:
+                break
+        
+        if (episode + 1) % print_every == 0:
+            print(f"Episode {episode + 1}, Episode's Reward: {episode_reward_total:.2f}, Subgoal: {agent.has_subgoal}, Goal: {agent.has_goal}")
+        if stop:
+            break
     
-    # Remove walls to create the maze
-    for y1, x1, y2, x2 in walls:
-        if union((y1, x1), (y2, x2)):
-            # Remove the wall between cells
-            wall_y = (y1 + y2) // 2
-            wall_x = (x1 + x2) // 2
-            maze[wall_y, wall_x] = 0
-    
-    return maze
+    with open(save_metrics, 'w') as file:
+            json.dump(data, file, indent=4)
+    return reward_total
 
-# Example usage and testing
-def test_maze():
-    maze = generate_maze(10, 10)
-    # Verify maze dimensions
-    assert maze.shape == (10, 10), f"Wrong size: {maze.shape}"
-    # Verify outer walls
-    assert np.all(maze[0,:] == 1), "Top wall missing"
-    assert np.all(maze[-1,:] == 1), "Bottom wall missing"
-    assert np.all(maze[:,0] == 1), "Left wall missing"
-    assert np.all(maze[:,-1] == 1), "Right wall missing"
-    return maze
-
-# Helper function to visualize the maze
-def print_maze(maze):
-    for row in maze:
-        print(''.join(['██' if cell else '  ' for cell in row]))
-
-maze = test_maze()
-print_maze(maze)
+r_policy = RandomPolicy()
+agent = Agent(r_policy)
+random_baseline(Environment(), agent, 9000, save_metrics='random_baseline.json')
