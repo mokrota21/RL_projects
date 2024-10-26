@@ -14,9 +14,9 @@ UNOBSERVED_M = 4
 AGENT_M = 5
 ### Env reward
 EMPTY_R = -0.1
-WALL_R = -1.0
-SUBGOAL_R = 5.0
-GOAL_R = 10.0
+WALL_R = -10.0
+SUBGOAL_R = 50.0
+GOAL_R = 100.0
 ### Agent params
 VISIBILITY = 2
 
@@ -103,7 +103,7 @@ class Environment:
             start = self.subgoal_pos
         
         reward_map = self.map.copy().astype(np.float32)
-        reward_map[reward_map == WALL_M] = -100
+        reward_map[reward_map == WALL_M] = WALL_R * 10
         visited = set()
         deck = deque([])
         
@@ -174,9 +174,9 @@ class Environment:
 
     def get_reward(self, pos: Point, has_subgoal: bool):
         if has_subgoal:
-            return self.reward_map_subgoal[pos.yx]
-        else:
             return self.reward_map_goal[pos.yx]
+        else:
+            return self.reward_map_subgoal[pos.yx]
         # tile = self.map[pos.yx]
         # if tile == WALL_M:
         #     return WALL_R

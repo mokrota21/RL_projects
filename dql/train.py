@@ -49,7 +49,7 @@ def train_dql(env: Environment, agent: Agent, value_action: ValueAction, num_epi
         n_reward = 0
         l_rewards = []
 
-        for _ in range(max_steps):
+        for step_count in range(max_steps):
             # RL
             updated = env.update()
             action = agent.action_history[-1]
@@ -76,7 +76,7 @@ def train_dql(env: Environment, agent: Agent, value_action: ValueAction, num_epi
                 data_count += 1
                 if data_count % save_per == 0:
                     data['loss'].append(loss)
-                    data['reward'].append(reward_total / reward_count)
+                    data['reward'].append(episode_reward_total / (step_count + 1))
                     data['goal'].append(agent.has_goal)
                     data['subgoal'].append(agent.has_subgoal)
                     data['epsilon'].append(agent.policy.epsilon)

@@ -5,6 +5,8 @@ from train import train_dql, EPolicy
 from rl import ValueAction
 
 from time import sleep
+
+path = 'vision_big_update_step'
 def testing(env: Environment, hyper_params_list: list, num_episodes: int = 20, max_steps: int = 100):
     count = 0
     for params in hyper_params_list:
@@ -12,8 +14,8 @@ def testing(env: Environment, hyper_params_list: list, num_episodes: int = 20, m
         value_action = ValueAction(**params)
         policy = EPolicy(value_action=value_action, initial_epsilon=0.5, decay=0.9999)
         agent = AgentVision(policy=policy, visibility=10)
-        metrics_path = "vision" + str(count) + '.json'
-        model_path = 'vision' + str(count) + '.json'
+        metrics_path = path + str(count) + '.json'
+        model_path = path + str(count) + '.pth'
         train_dql(env=env, agent=agent, value_action=value_action, num_episodes=200, max_steps=100,
                         save_model=model_path, save_metrics=metrics_path, random=True, print_every=10)
         # train_dql(env=env, value_action=value_action, num_episodes=num_episodes, max_steps=max_steps, print_every=1000000)
@@ -26,7 +28,7 @@ alpha_values = [0.0001, 0.001]
 tau_values = [0.0001, 0.001]
 n = [1, 10]
 architectures = ['exp_hidden', 'one_hidden']
-steps_per_update = [10, 100, 1000]
+steps_per_update = [100, 1000]
 
 params_table = [alpha_values, tau_values, architectures, steps_per_update, n]
 params_names = "alpha tau architecture steps_per_update n".split(' ')
@@ -39,7 +41,12 @@ default_vals = [dim, buffer_size, state_size, batch_size]
 default_names = "dim buffer_size state_size batch_size".split(' ')
 
 params_list = []
-for i in range(len(alpha_values) ** len(params_table)):
+
+l = 1
+for i in params_table:
+    l *= len(i)
+
+for i in range(l):
     combination = [0] * len(params_table)
     count = 0
     while i > 0:
@@ -60,6 +67,12 @@ for i in range(len(alpha_values) ** len(params_table)):
     
     params_list.append(combo)
 
-testing(env=env, hyper_params_list=params_list, num_episodes=200)
+print(*params_list, sep='\n')
+
+import pandas as pd
+df = pd.DataFrame(params_list)
+df.to_json(path + '_params.json')
+# TO DO: use paths to store data
+# testing(env=env, hyper_params_list=params_list, num_episodes=200)
 
 # print(len(params_list))
