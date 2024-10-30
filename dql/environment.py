@@ -16,7 +16,7 @@ AGENT_M = 5
 EMPTY_R = -0.1
 WALL_R = -10.0
 SUBGOAL_R = 50.0
-GOAL_R = 100.0
+GOAL_R = 50.0
 ### Agent params
 VISIBILITY = 2
 

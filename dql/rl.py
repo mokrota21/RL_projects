@@ -3,7 +3,7 @@ from environment import Agent, Environment, Point, Policy, ACTIONS, deque, np
 import torch.nn as nn
 from random import random, sample, choice
 import matplotlib as plt
-from copy import deepcopy
+from datetime import datetime
 from typing import List
 
 # Pros: Relatively simple. Cons: May be not representative enough
@@ -87,19 +87,54 @@ class DQNetwork(nn.Module):
         return self.network(x)
 
 class ReplayBuffer:
-    """Experience replay buffer for DQL to avoid being stuck in local minima"""
+    """Experience replay buffer for DQL, optimized to store tensors for faster sampling."""
     
-    def __init__(self, max_size: int):
-        self.buffer = list()
+    def __init__(self, max_size: int, device: torch.device = DEVICE):
+        self.buffer = []
         self.max_size = max_size
+        self.device = device
         
     def push(self, state: State, action: int, reward: float, next_state: State, terminate: bool):
-        self.buffer.append((state, action, reward, next_state, terminate))
+        # Convert each element to a tensor and move it to the specified device
+        state_tensor = state.to_tensor().to(self.device)
+        action_tensor = torch.tensor(action, dtype=torch.int64, device=self.device)
+        reward_tensor = torch.tensor(reward, dtype=torch.float32, device=self.device)
+        next_state_tensor = next_state.to_tensor().to(self.device)
+        terminate_tensor = torch.tensor(not terminate, dtype=torch.int64, device=self.device)
+        
+        # Store as a tuple of tensors
+        self.buffer.append((state_tensor, action_tensor, reward_tensor, next_state_tensor, terminate_tensor))
         if len(self.buffer) > self.max_size:
             self.buffer.pop(0)
         
-    def get_batch(self, batch_size: int) -> List[tuple]:
-        return sample(self.buffer, batch_size)
+    def get_batch(self, batch_size: int):
+        batch = sample(self.buffer, batch_size)
+        # Unzip and stack tensors for batch processing
+        states, actions, rewards, next_states, terminates = zip(*batch)
+        
+        # Stack directly without further conversion
+        state_tensor = torch.stack(states)
+        action_tensor = torch.stack(actions).unsqueeze(1)
+        reward_tensor = torch.stack(rewards).unsqueeze(1)
+        next_state_tensor = torch.stack(next_states)
+        terminate_tensor = torch.stack(terminates).unsqueeze(1)
+        
+        return state_tensor, action_tensor, reward_tensor, next_state_tensor, terminate_tensor
+
+# class ReplayBuffer:
+#     """Experience replay buffer for DQL to avoid being stuck in local minima"""
+    
+#     def __init__(self, max_size: int):
+#         self.buffer = list()
+#         self.max_size = max_size
+        
+#     def push(self, state: State, action: int, reward: float, next_state: State, terminate: bool):
+#         self.buffer.append((state, action, reward, next_state, terminate))
+#         if len(self.buffer) > self.max_size:
+#             self.buffer.pop(0)
+        
+#     def get_batch(self, batch_size: int) -> List[tuple]:
+#         return sample(self.buffer, batch_size)
     
     def __len__(self) -> int:
         return len(self.buffer)
@@ -107,7 +142,7 @@ class ReplayBuffer:
 class ValueAction:
     """Implementation of value action function Q with Neural Network."""
 
-    def __init__(self, state_size, architecture, batch_size=64, buffer_size=10000, steps_per_update=100, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2, n=1):
+    def __init__(self, state_size, architecture, batch_size=64, buffer_size=10000, steps_per_update=100, dim=0.99, alpha=0.001, tau=0.001, dropout=0.2):
         "To train existing model we give model as input. It is assumed that output of model is of size of 4"
         self.memory = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
@@ -115,7 +150,6 @@ class ValueAction:
         self.tau = tau
         self.steps_per_update = steps_per_update
         self.step = 0
-        self.n = n # how many steps we do before bootstraping
 
         # DQ networks. We had some bugs with using only one network so for now decided to split them
         self.qnetwork_online = DQNetwork(state_size, architecture=architecture, dropout_rate=dropout).to(DEVICE)
@@ -131,24 +165,24 @@ class ValueAction:
         
         # Sampling actions
         batch = self.memory.get_batch(self.batch_size)
-        states, actions, rewards, next_states, terminate = zip(*batch)
+        state_tensor, action_tensor, reward_tensor, next_state_tensor, terminate_tensor = batch
+        # states, actions, rewards, next_states, terminate = zip(*batch)
         
-        # Converting to tensors
-        state_tensor = torch.stack([s.to_tensor() for s in states]).to(DEVICE)
-        action_tensor = torch.tensor(actions).unsqueeze(1).to(DEVICE)
-        reward_tensor = torch.tensor(rewards).unsqueeze(1).to(DEVICE)
-        next_state_tensor = torch.stack([s.to_tensor() for s in next_states]).to(DEVICE)
-        
+        # # Converting to tensors
+        # s = datetime.now()
+        # state_tensor = torch.stack([s.to_tensor() for s in states]).to(DEVICE)
+        # print(datetime.now() - s)
+        # action_tensor = torch.tensor(actions).unsqueeze(1).to(DEVICE)
+        # reward_tensor = torch.tensor(rewards).unsqueeze(1).to(DEVICE)
+        # next_state_tensor = torch.stack([s.to_tensor() for s in next_states]).to(DEVICE)
+
         # Computing q values
         current_q_values = self.qnetwork_online(state_tensor)
         current_q_values = current_q_values.gather(1, action_tensor)
-        if terminate:
-            next_q_values = 0
-        else:
-            with torch.no_grad():
-                next_q_values = self.qnetwork_other(next_state_tensor)
-                next_q_values = next_q_values.max(1)[0].unsqueeze(1)
-        target_q_values = reward_tensor + self.dim ** self.n * next_q_values
+        with torch.no_grad():
+            next_q_values = self.qnetwork_other(next_state_tensor)
+            next_q_values = next_q_values.max(1)[0].unsqueeze(1)
+        target_q_values = reward_tensor + self.dim * next_q_values
         
         # Optimize
         loss = nn.MSELoss()(current_q_values.float(), target_q_values.detach().float())
@@ -167,7 +201,7 @@ class ValueAction:
         """Copy paste weights"""
         for other_param, online_param in zip(self.qnetwork_other.parameters(), self.qnetwork_online.parameters()):
             other_param.data.copy_(self.tau * online_param.data + (1.0 - self.tau) * other_param.data)
-    
+
     def save(self, path: str):
         """Save weights"""
         torch.save({

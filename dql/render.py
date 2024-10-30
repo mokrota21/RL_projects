@@ -20,10 +20,10 @@ replace_1 = lambda x: WALL_M if x == 1 else x
 maze_map = list(map(lambda x: list(map(replace_1, x)), maze_map))
 maze_map = np.array(maze_map, dtype=np.int64)
 
-ENV = Environment()
-RANDOM = True
+# ENV = Environment()
+# RANDOM = True
 ENV = Environment(map=maze_map, subgoal_pos=Point(5, 3), goal_pos=Point(8, 7)) # homework
-# RANDOM = False
+RANDOM = False
 
 class Renderer:
     def __init__(self, agent: Agent, window_size=200, cell_size=40, num_episodes=1000, max_steps=100):
@@ -146,9 +146,9 @@ class Renderer:
 
 
 value_action = ValueAction(500, architecture='one_hidden')
-value_action.load('full_vision_long_run.pth')
-policy = EPolicy(value_action=value_action, initial_epsilon=0.0)
-agent = AgentVision(policy=policy, visibility=100)
+value_action.load('no_terminate.pth')
+policy = EPolicy(value_action=value_action, initial_epsilon=0.1)
+agent = AgentVision(policy=policy, visibility=20)
 ENV.reset([agent], random=RANDOM)
 agent.reset(environment=ENV, random=True)
 Renderer(agent=agent)
