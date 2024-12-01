@@ -76,7 +76,7 @@ This repository contains an implementation of a Deep Q-Learning (DQL) model desi
 ![Tuning Rewards](tuning_reward.png)  
 *Figure 3: Rewards during tuning.*
 
-![Training Loss](tuning_loss.png)  
+![Training Loss](training_loss.png)  
 *Figure 4: Loss convergence during tuning.*
 
 ![Training Rewards](training_reward.png)  
