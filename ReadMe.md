@@ -2,7 +2,7 @@
 
 This repository contains an implementation of a Deep Q-Learning (DQL) model designed to solve random 10x10 mazes. The project explores reinforcement learning principles to train an agent capable of navigating mazes efficiently, overcoming challenges like walls, sub-goals, and dynamic configurations.
 
-[![Demo Video](https://img.youtube.com/vi/tRehNnkkg84/0.jpg)](https://www.youtube.com/watch?v=tRehNnkkg84)
+[![Demo](pictures/demo.gif)](https://www.youtube.com/watch?v=tRehNnkkg84)
 
 ---
 
