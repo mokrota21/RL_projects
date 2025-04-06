@@ -70,16 +70,16 @@ This repository contains an implementation of a Deep Q-Learning (DQL) model desi
    - Loss convergence trends and reward accumulation over episodes.
    - Filtering top-performing configurations based on reward metrics.
 
-![Tuning Loss](tuning_loss.png)  
+![Tuning Loss](pictures/tuning_loss.png)  
 *Figure 2: Loss convergence during tuning.*
 
-![Tuning Rewards](tuning_reward.png)  
+![Tuning Rewards](pictures/tuning_reward.png)  
 *Figure 3: Rewards during tuning.*
 
-![Training Loss](training_loss.png)  
+![Training Loss](pictures/training_loss.png)  
 *Figure 4: Loss convergence during tuning.*
 
-![Training Rewards](training_reward.png)  
+![Training Rewards](pictures/training_reward.png)  
 *Figure 5: Rewards during training.*
 
 ### Challenges and Limitations
